@@ -102,8 +102,8 @@ class MyMQTTClass(object):                                                  #DRR
         self.BUFFER_SIZE=BUFFER_SIZE
         self.setupMQTTClient(Host,Puerto,nombre,contra)
         self.subscribeMe()
-        self.keepAliveThread=threading.Thread(target=self.mqttAlive,name="Alive",daemon=True)
-        self.keepAliveThread.start()                                        #Notese la forma en la que se crea el hilo del ALIVE
+        #self.keepAliveThread=threading.Thread(target=self.mqttAlive,name="Alive",daemon=True) 
+        #self.keepAliveThread.start()                                        #Notese la forma en la que se crea el hilo del ALIVE
         self.interfaz()                     #Aqui ya empieza el bucle del programa
 
     def publishData(self, topic,data):                                      #DRRP   Metodo que publicara en los topics correspondientes
@@ -115,7 +115,7 @@ class MyMQTTClass(object):                                                  #DRR
         self.mqttc.publish(topic,mensaje,qos,retain)
 
     def clientevivo(self,qos=0,retain=False):                               #DRRP   Se publica el ALIVE (\x04)
-        topic=COMANDOS+"/"+str(grupo)+"/"+self.userid
+        topic=COMANDOS+"/"+str(grupo)+"/"+self.userid                      
         mensaje=b'\x04'+b'$'+bytes(self.userid,"utf-8")
         self.mqttc.publish(topic,mensaje,qos,retain)
 

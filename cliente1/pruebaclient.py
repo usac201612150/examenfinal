@@ -48,7 +48,7 @@ class MyMQTTClass(object):                                                  #DRR
             level=logging.INFO,
             format='[%(levelname)s] (%(threadName)-10s) %(message)s'
         )
-        self.logging=logging                                                #DRRP   No estoy seguro si es necesario declararlo así
+        #self.logging=logging                                                #DRRP   No estoy seguro si es necesario declararlo así
         self.dead=dead                                                      #       contador para el ALIVE
         self.EstoyMuriendo=EstoyMuriendo                                    #       bandera para el ALIVE
         self.ItLives=ItLives                                                #       Definiciones de tiempo en el ALIVE
@@ -121,6 +121,7 @@ class MyMQTTClass(object):                                                  #DRR
             elif self.dead==3:                                              #DRRP   La logica de esto es que cada ALIVE genera un dead
                 self.EstoyMuriendo=True                                     #       que si llega un ACK lo cancela, si el dead llega a 3
                 time.sleep(self.ItLives)                                    #       se levanta la bandera EstoyMuriendo para que el tiempo
+                logging.info("cool im alive")
             elif self.EstoyMuriendo==True and self.dead <=200:              #       del alive sea menor. En caso se restablezca la conexion
                 time.sleep(self.AmIDead)                                    #       la bandera y el contador seran reseteados.
             elif dead<=3:                                                   #       Notese que se cumplen con los tiempos estipulados pues
@@ -128,35 +129,43 @@ class MyMQTTClass(object):                                                  #DRR
             else:
                 logging.critical("¡Vaya! Te has desconectado del servidor. \nPara continuar reinicia el programa.")
                 sys.exit()
+                break
             
     def mensajeria(self,data):                                              #DRRP   metodo que manejara los topics y redirigira en caso 
         data=(str(data[0]),data[1])                                         #       sea necesario.
         registro=[]
+        trama=data[1].decode("utf-8")
         if data[0][:8]==COMANDOS:
-            trama=data[1].decode()
             registro=trama.split("$")       #DRRP   Se aprovecha la ventaja del split para trabajar mas rapido
-            if registro[0]=="\x05":
-                self.EstoyMuriendo=False    #DRRP   Apaga bandera que acelera el tiempo
-                self.dead=0                 #       Tambien coloca en 0 el contador del ALIVE
-            elif registro[0]=="\x06":
-                self.BanderaAudio=True      #DRRP   servidor acepta el intercambio de audio
-                self.BanderaHoldOn=False    #       apaga la espera del servidor
-                #Agregar metodo para la grabación del audio
-            elif registro[0]=="\x07":
-                self.BanderaAudio=False     #DRRP   servidor deniega el intercambio de audio
-                self.BanderaHoldOn=False    #       apaga la espera del servidor
-                
+            if registro[-1]==self.userid:
+                if registro[0]=="\x05":
+                    self.EstoyMuriendo=False    #DRRP   Apaga bandera que acelera el tiempo
+                    self.dead=0                 #       Tambien coloca en 0 el contador del ALIVE
+                elif registro[0]=="\x06":
+                    self.BanderaAudio=True      #DRRP   servidor acepta el intercambio de audio
+                    self.BanderaHoldOn=False    #       apaga la espera del servidor
+                    #Agregar metodo para la grabación del audio
+                elif registro[0]=="\x07":
+                    self.BanderaAudio=False     #DRRP   servidor deniega el intercambio de audio
+                    self.BanderaHoldOn=False    #       apaga la espera del servidor
+        elif data[0][:5]==SALAS:
+            logging.info("Se ha recibido un mensaje de la sala "+data[0][9:14])
+            logging.info(trama)
+        elif data[0][:8]==USUARIOS:
+            logging.info("Se recibió un mensaje para usted")
+            logging.info(trama)
+
 ########################
 ########################
 
     def on_message(self, mqttc,obj,msg):    #DRRP   metodo exlusivo de MQTT (redirige la informacion)
         self.mensajeria((msg.topic,msg.payload))
-
+        
     def on_connect(self,mqttc,obj,flags,rc):#DRRP   metodo exlusivo de MQTT, indica la coneccion
         logging.info("Conectado correctamente")
     
     def on_publish(self,mqttc,obj,mid):     #DRRP   metodo exlusivo de MQTT, indica si la publicacion fue satisfactoria
-        logging.info("Publicacion exitosa")
+        logging.debug("Publicacion exitosa")
     
     def interfaz(self):                                                     #DRRP   Metodo que trabaja toda la interfaz
         print("\n\nBienvenido al chat de proyectos980")                     #       es el encargado del loop principal

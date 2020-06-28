@@ -21,14 +21,14 @@ import socket
 ########################################################################## #DRRP
 grupo=21
 
-MQTT_HOST = "167.71.243.238"            #Necesarios para MQTT
+MQTT_HOST = "104.196.52.230"#"167.71.243.238"            #Necesarios para MQTT
 MQTT_PORT = 1883
-MQTT_USER = "proyectos"
-MQTT_PASS = "proyectos980"
+MQTT_USER = "Saul"#"proyectos"
+MQTT_PASS = "silvacdc"#"proyectos980"
 qos = 2
 
-TCP_HOST="167.71.243.238"               #Necesarias para la transferencia de archivos
-TCP_PORT=9821 
+TCP_HOST="104.196.52.230"#"167.71.243.238"               #Necesarias para la transferencia de archivos
+TCP_PORT=9800#9821 
 BUFFER_SIZE=64*1024
 
 ItLives=2                               #2segundos para ALIVE
@@ -97,6 +97,9 @@ class MyMQTTClass(object):                                                  #DRR
         Puerto = MQTT_PORT 
         nombre = MQTT_USER
         contra = MQTT_PASS
+        self.TCP_HOST=TCP_HOST
+        self.TCP_PORT=TCP_PORT
+        self.BUFFER_SIZE=BUFFER_SIZE
         self.setupMQTTClient(Host,Puerto,nombre,contra)
         self.subscribeMe()
         self.keepAliveThread=threading.Thread(target=self.mqttAlive,name="Alive",daemon=True)
@@ -106,6 +109,11 @@ class MyMQTTClass(object):                                                  #DRR
     def publishData(self, topic,data):                                      #DRRP   Metodo que publicara en los topics correspondientes
         self.mqttc.publish(topic=topic,payload=data,qos=0)
     
+    def IwantToBreakFree(self,destin,filesize,qos=0,retain=False):
+        topic=COMANDOS+"/"+str(grupo)+"/"+self.userid
+        mensaje=b'\x03'+b'$'+bytes(destin,"utf-8")+b'$'+bytearray(filesize,"utf-8")
+        self.mqttc.publish(topic,mensaje,qos,retain)
+
     def clientevivo(self,qos=0,retain=False):                               #DRRP   Se publica el ALIVE (\x04)
         topic=COMANDOS+"/"+str(grupo)+"/"+self.userid
         mensaje=b'\x04'+b'$'+bytes(self.userid,"utf-8")
@@ -130,7 +138,27 @@ class MyMQTTClass(object):                                                  #DRR
                 logging.critical("¡Vaya! Te has desconectado del servidor. \nPara continuar reinicia el programa.")
                 sys.exit()
                 break
-            
+    
+    def RecepAudio(self,lista):
+        logging.info("Se ha recibido un audio de: "+str(lista[1])+" de tamaño: "+str(lista[2]))
+        logging.info("Se reproducira en unos momentos.....")
+        sock=socket.socket()
+        sock.connect((self.TCP_HOST,self.TCP_PORT))
+        try:
+            buf=sock.recv(self.BUFFER_SIZE)
+            archivo=open("notaentrante.wav","wb")
+            while buf:
+                archivo.write(buf)
+                buf=sock.recv(self.BUFFER_SIZE)
+            archivo.close()
+            sock.close()
+            os.system("aplay notaentrante.wav")
+        except InterruptedError:
+            logging.warning("Ha ocurrido un error en la transmision")
+        finally:
+            sock.close()
+        
+
     def mensajeria(self,data):                                              #DRRP   metodo que manejara los topics y redirigira en caso 
         data=(str(data[0]),data[1])                                         #       sea necesario.
         registro=[]
@@ -144,10 +172,12 @@ class MyMQTTClass(object):                                                  #DRR
                 elif registro[0]=="\x06":
                     self.BanderaAudio=True      #DRRP   servidor acepta el intercambio de audio
                     self.BanderaHoldOn=False    #       apaga la espera del servidor
-                    #Agregar metodo para la grabación del audio
                 elif registro[0]=="\x07":
                     self.BanderaAudio=False     #DRRP   servidor deniega el intercambio de audio
                     self.BanderaHoldOn=False    #       apaga la espera del servidor
+                elif registro[0]=="\x02":
+                    self.Audiothread=threading.Thread(name="Recepcion audio",target=RecepAudio,args=registro,daemon=False)
+                    self.Audiothread.start()
         elif data[0][:5]==SALAS:
             logging.info("Se ha recibido un mensaje de la sala "+data[0][9:14])
             logging.info(trama)
@@ -179,15 +209,36 @@ class MyMQTTClass(object):                                                  #DRR
                     Destinatario=USUARIOS+"/"+str(grupo)+"/"+destin
                     self.publishData(Destinatario,mensaje)
                 elif instruccion=="1b":     #Mensaje a grupo
-                    destin, mensaje=Instructions.grupo(instruccion)
+                    destin, mensaje=self.instru.grupo()
                     Destinatario=SALAS+"/"+str(grupo)+"/"+destin
                     self.publishData(Destinatario,mensaje)
-                #elif instruccion=="2":      #Audio
-                #    pass
-                #elif instruccion=="3":      #Desconectarme
-                #    Instructions.goodbye(instruccion)
-                elif instruccion=="4":      #Menu
-                    Instructions.inicial(instruccion)
+                elif instruccion=="2":      #Audio
+                    destin, peso, recordflag=self.instru.audiorec()
+                    if recordflag:
+                        logging.info("Espere la validacion del servidor. . . . .")
+                        self.IwantToBreakFree(destin,peso)
+                        time.sleep(5)
+                        if self.BanderaAudio:
+                            logging.info("Se transmitira el audio, por favor espere.")
+                            sock=socket.socket()
+                            sock.connect((self.TCP_HOST,self.TCP_PORT))
+                            try:
+                                with open("notadevoz.wav","rb") as audio:
+                                    sock.sendall(audio)
+                                audio.close()
+                                sock.close()
+                            except InterruptedError:
+                                logging.warning("Ha ocurrido un error en la transmision")
+                            finally:
+                                sock.close()
+                    else:
+                        logging.warning("Su transmisión ha sido rechazada, intentelo más tarde")
+
+
+                elif instruccion=="4":      #Desconectarme
+                    self.instru.goodbye()
+                    self.mqttc.disconnect()
+                    sys.exit()
                 else:
                     print("\nIngrese un comando válido, Ej: \'1a\'")
         except KeyboardInterrupt:           #En caso que se detenga el programa               
@@ -208,7 +259,6 @@ class Instructions(object):                                                 #DRR
         print("\t1. Enviar texto \n\t\ta.Enviar mensaje directo\n\t\tb.Enviar a una sala")
         print("\t2. Enviar nota de voz")
         print("\t3. Desconectarme")
-        print("\t4. Mostrar opciones")
 
     def direct(self):                                                       #DRRP   Establecimiento de mensaje directo
         Destinatario=input("Destinatario:")
@@ -221,22 +271,23 @@ class Instructions(object):                                                 #DRR
         return Destinatario, texto_enviar
 
     def audiorec(self):
-        #duracion=input("Cuantos segundos desea grabar:")
-        #if int(duracion)>0 and int(duracion)<=30:
-        #    logging.info("Comenzando grabacion...")
-        #    consola="arecord -d"+str(duracion)+"-f U8 -r 8000 notadevoz.wav"
-        #    os.system(consola)
-        #    peso=os.stat("noradevoz.wav").st_size
-        #    grabado=True
-        #else: 
-        #    logging.warning("Tiempo no valido")
-        #    grabado=False
-        #    peso=0
-        #return grabado,peso
-        pass
+        Destinatario=input("A quien desea enviarle este audio: ")
+        duracion=input("Cuantos segundos desea grabar:")
+        if int(duracion)>0 and int(duracion)<=30:
+            logging.info("Comenzando grabacion...")
+            consola="arecord -d "+str(duracion)+" -f U8 -r 8000 notadevoz.wav"
+            os.system(consola)
+            peso='os.stat("noradevoz.wav").st_size'
+            grabado=True
+        else: 
+            logging.warning("Tiempo no valido")
+            grabado=False
+            peso=0
+        return Destinatario,peso,grabado
+        
 
     def goodbye(self):
-        pass
+        print("Vaya una pena que te vayas, vuelve pronto")
 
 
 ExamenProyectos980=MyMQTTClass()

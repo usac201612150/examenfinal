@@ -7,29 +7,28 @@ import logging
 import socket
 import binascii
 import os 
+import threading
 from DatosBroker import *
 from ConfirmarUsuario import *
 from SuscripcionesTopic import *
 from ComandoMensaje import *
 #############################################################
-###########   DATOS DEL SERVIDOR   ##########################
+######################   DEFINICIONES  ##########################
 #############################################################
 SERVER_IP   = '167.71.243.238'  #RDSS IP DEL SERVIDOR
 SERVER_PORT = 9821              #RDSS PUERTO A UTILIZAR TCP
 BUFFER_SIZE = 65536             #RDSS CANTIDAD DE BYTES QUE VAMOS A TRANSFERIR EN CADA ENVIO
+qos = 2
 
-#RDSS Se crea socket TCP
-sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) #RDSS LE INDICAMOS QUE VAMOS A TRABAJAR CON IPV4 Y CON TCP
+COMANDOS = 'comandos'
+USUARIOS = 'usuarios'
+GRUPO = 21
+COMANDO_FRR = b'\x02'
+COMANDO_ACK = b'\x05'
+COMANDO_OK = b'\x06'
+COMANDO_NO = b'\x07'
 
-#RDSS Se conecta al puerto donde el servidor se encuentra a la escucha
-server_address = (SERVER_IP, SERVER_PORT)   #RDSS LE DAMOS LOS PARAMETROS DE IP Y PUERTO
-print('Conectando a {} en el puerto {}'.format(*server_address))
-sock.bind(server_address)  #RDSS Levanta servidor con parametros especificados
-
-# Habilita la escucha del servidor en las interfaces configuradas
-sock.listen(10) #RDSS El argumento indica la cantidad de conexiones en cola
-
-
+Archivo_mensajes = 'mensajes.log' #RDSS aca vamos a guardar los mensajes que llegan de los topics
 ############################################################
 #############CONFIGURAMOS ES LOGGING #######################
 ############################################################
@@ -38,58 +37,101 @@ logging.basicConfig(
     level = logging.INFO, 
     format = '[%(levelname)s] (%(threadName)-10s) %(message)s'
     )
-
 ##############################################################
-################### CONFIGURACION MQTT #######################
+################### CLASE SERVIDOR TCP #######################
+##############################################################
+class ServerTCP (object):
+    def __init__(self):
+        logging.basicConfig(
+            level = logging.INFO, 
+            format = '[%(levelname)s] (%(threadName)-10s) %(message)s'
+        )
+        self.parametrosServer()
+    
+    def inicioServerTCP(self, ip, puerto, sock, usuariocola):
+        server_address = (ip,puerto)#RDSS LE DAMOS LOS PARAMETROS DE IP Y PUERTO
+        logging.info('Conectando a {} en el puerto {}'.format(*server_address))
+        sock.bind(server_address) #RDSS Levanta servidor con parametros especificados
+        sock.listen(usuariocola) #RDSS El argumento indica la cantidad de conexiones en cola
+
+    def parametrosServer(self):
+        ip = SERVER_IP
+        puerto = SERVER_PORT
+        usuariocola = 10 #RDSS indica la cantidad de conexiones en cola
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) #RDSS LE INDICAMOS QUE VAMOS A TRABAJAR CON IPV4 Y CON TCP
+        self.inicioServerTCP(ip,puerto,sock,usuariocola)
+        
+##############################################################
+######################## CLASE MQTT ##########################
 ##############################################################
 
-Archivo_mensajes = 'mensajes.log' #RDSS aca vamos a guardar los mensajes que llegan de los topics
+class claseMQTT (object):
+    def __init__(self):
+        logging.basicConfig(
+            level=logging.INFO,
+            format='[%(levelname)s](%(threadName)-10s) %(message)s'
+        )
+        self.logging=logging
+        self.ConfiguracionMQTT()
+        self.Archivo_mensajes = Archivo_mensajes
 
-#Callback que se ejecuta cuando nos conectamos al broker
-def on_connect(client, userdata, rc):
-    logging.info("Conectado al broker")
+    def ConfClienteMQTT(self, address, port, usuario, contrasena):
+        self.mqttc = mqtt.Client(clean_session=True)
+        self.mqttc.on_message = self.on_message
+        self.mqttc.on_connect = self.on_connect
+        self.mqttc.on_publish = self.on_publish
+        self.mqttc.username_pw_set(usuario,contrasena)
+        self.mqttc.connect(address,port)
 
-#Callback que se ejecuta cuando llega un mensaje al topic suscrito
-def on_message(client, userdata, msg):
-    #Se muestra en pantalla informacion que ha llegado
-    logging.info("Ha llegado el mensaje al topic: " + str(msg.topic))
-    logging.info("El contenido del mensaje es: " + str(msg.payload))
-    #vamos a almacenar el mensaje en un archivo.
-    MensajeRecibido = 'echo '+str(msg.payload) + ' > '+ Archivo_mensajes
-    os.system(MensajeRecibido)
+    def suscripcionesTopic(self):      #creamos una lista para almacenar los datos de cada linea del archivo
+        suscripciones = []         #creamos la lista donde almacenaremos las tuplas de los topics
+        qos = 2                    #qos valor que nos servira para indicar que forma de transferencia preferimos
 
-#Handler en caso se publique satisfactoriamente en el broker MQTT
-def on_publish(client, userdata, mid): 
-    publishText = "Publicacion satisfactoria"
-    logging.debug(publishText)
+        archivo = open(USUARIOS, 'r') #abrimos el archivo usuarios en modo lectura
+        for linea in archivo:         #for para cada line del archivo
+            registro = linea.split(',') #va a separar cada vez que encuentre una coma
+            registro[-1] = registro[-1].replace('\n', '')  #elimina el salto de linea que encuentra al final de cada linea
+            datos.append(registro) #agrega la lista registros dentro de la lista datos
+        archivo.close() #Cerramos el archivo
 
-###################################################################
-client = mqtt.Client(clean_session=True) #Nueva instancia de cliente
-client.on_connect = on_connect #Se configura la funcion "Handler" cuando suceda la conexion
-client.on_message = on_message #Se configura la funcion "Handler" que se activa al llegar un mensaje a un topic subscrito
-client.on_publish = on_publish #Se configura la funcion "Handler" que se activa al publicar algo
-client.username_pw_set(MQTT_USER, MQTT_PASS) #Credenciales requeridas por el broker
-client.connect(host=MQTT_HOST, port = MQTT_PORT) #Conectar al servidor remoto
+        for i in range(len(datos)):  #For que nos recorre la lista datos
+            Nusuarios = [qos]        #creamos una lista para los N usuarios con el valor de qos ya definido
+            NuevoSuscriptor = COMANDOS+'/'+str(GRUPO)+'/'+str(datos[i][0]) #agragamos el usuario a la cadena para suscribirnos al topic
+            Nusuarios.insert(0,NuevoSuscriptor) #le indicamos que vamos a agregar la suscripcion al principio de la lista Nusuarios y corremos qos
+            TuplaNusuarios = tuple(Nusuarios)   #convertimos la lista a tuplas 
+            suscripciones.append(TuplaNusuarios) #agregamos la tupla a la lista de suscripciones
+        self.mqttc.subscribe(suscripciones) #nos suscribimos a todos los usuarios que estan en la lista
+        self.mqttThread=thread.Thread(target=self.mqttc.loop_start,name = 'Recepcion Comandos MQTT', daemon = True)
+        self.mqttThread.start()
 
-#Nos conectaremos a distintos topics:
-qos = 2
-######################################################
-########### SUSCRIPCION A LOS TOPIC ##################
-######################################################
+    def ConfiguracionMQTT(self):
+        direccion = MQTT_HOST
+        puerto = MQTT_PORT
+        usuario = MQTT_USER
+        contrasena = MQTT_PASS
+        self.ConfClienteMQTT(direccion,puerto,usuario,contrasena)
+        self.SuscripcionesTopic()
 
-#Subscripcion simple con tupla (topic,qos)
-#utilizamos suscripcionesTopic() porque nos arroja todos los usuarios permitidos a partir del archivo usuarios.txt
-client.subscribe(suscripcionesTopic()) #nos suscribimos a todos los usuarios que estan en la lista
-#######################################################
-#Publicador simple
-def publishData(topicRoot, topicName, value, qos = 2, retain = False):
-    topic = topicRoot + "/" + topicName
-    client.publish(topic, value, qos, retain)
+    def publishData(self, topicName, data): #Publicador simple
+        self.mqttc.publish(topic = topic, payload = data,qos=0)
 
+    def ACK(self, qos=0, retain=False):
+        topic = COMANDOS+'/'+str(GRUPO)+'/'
+        mensaje = COMANDO_ACK+b'$'+bytes(usuariogrupo,'utf-8')
+        self.mqttc.publish(topic,mensaje,qos,retain)
 
-#Iniciamos el thread (implementado en paho-mqtt) para estar atentos a mensajes en los topics subscritos
-client.loop_start()
-#client.loop_forever()
+    def on_connect(client, userdata, rc): 
+        logging.info("Conectado al broker")  #Callback que se ejecuta cuando nos conectamos al broker
+
+    def on_message(client, userdata, msg): #Callback que se ejecuta cuando llega un mensaje al topic suscrito
+        logging.info("Ha llegado el mensaje al topic: " + str(msg.topic))  #Se muestra en pantalla informacion que ha llegado
+        logging.info("El contenido del mensaje es: " + str(msg.payload))   #vamos a almacenar el mensaje en un archivo.
+        MensajeRecibido = 'echo '+str(msg.payload) + ' > '+ Archivo_mensajes
+        os.system(MensajeRecibido)
+
+    def on_publish(client, userdata, mid):   #Handler en caso se publique satisfactoriamente en el broker MQTT
+        publishText = "Publicacion satisfactoria"
+        logging.debug(publishText)
 
 ######################################################
 ## DATOS RECIBIDOS COMANDO, USUARIO, PESO ARCHIVO#####
@@ -126,20 +168,24 @@ class comandosmqtt (object):
 Accion = comandosmqtt(mqttcomando, mqttusuario, mqtttamano)
 
 def RecepcionAudio ():
-    try:
-        buff = sock.recv(BUFFER_SIZE)
-        archivo = open('notadevoz.wav','wb')
-        while buff:
-            buff = sock.recv(BUFFER_SIZE)
-            archivo.write(buff)
-        archivo.close()
-    finally:
-        sock.close()
+    while True:
+        try:
+            while True:       
+                buff = sock.recv(BUFFER_SIZE)
+                archivo = open('notadevoz.wav','wb')
+                while buff:
+                    buff = sock.recv(BUFFER_SIZE)
+                    archivo.write(buff)
+                archivo.close()
+        finally:
+            sock.close()
 
 def TransmisioAudio():
     try:
         while True:
             conn, addr = sock.accept()
+            logging.info("conexion establecida desde: ", addr)
+            logging.info("enviando audio")
             with open('notadevoz.wav','rb') as env:
                 conn.sendfile(env, 0)
                 env.close()

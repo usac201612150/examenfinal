@@ -4,7 +4,7 @@ def suscripcionesTopic ():
     suscripciones = []         #creamos la lista donde almacenaremos las tuplas de los topics
     qos = 2                    #qos valor que nos servira para indicar que forma de transferencia preferimos
 
-    archivo = open(USUARIOS, 'r') #abrimos el archivo usuarios.txt en modo lectura
+    archivo = open(USUARIOS, 'r') #abrimos el archivo usuarios en modo lectura
     for linea in archivo:         #for para cada line del archivo
         registro = linea.split(',') #va a separar cada vez que encuentre una coma
 

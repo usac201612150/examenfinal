@@ -31,7 +31,6 @@ def borrar (diccionario):
             diccionario[i] = [False, int(segundo())]
             print(diccionario)
 
-
 while True:
     x = input('alive: ', )
     h = x.split('$')

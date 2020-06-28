@@ -9,6 +9,7 @@ import binascii
 import os 
 import threading
 from DatosBroker import *
+from datetime import datetime, timedelta
 from ConfirmarUsuario import *
 from SuscripcionesTopic import *
 from ComandoMensaje import *
@@ -48,6 +49,8 @@ class claseMQTT (object):
         self.logging=logging
         #self.ConfiguracionMQTT()
         self.ServerTCP = ServerTCP()
+        self.ServerTCP.parametrosServer()
+        self.diccionario, self.listausuarios = self.DiccReg(USUARIOS)
 
     def ConfClienteMQTT(self, address, port, usuario, contrasena):
         self.mqttc = mqtt.Client(clean_session=True)
@@ -76,8 +79,14 @@ class claseMQTT (object):
             TuplaNusuarios = tuple(Nusuarios)   #convertimos la lista a tuplas 
             suscripciones.append(TuplaNusuarios) #agregamos la tupla a la lista de suscripciones
         self.mqttc.subscribe(suscripciones) #nos suscribimos a todos los usuarios que estan en la lista
-        self.mqttThread=threading.Thread(target=self.mqttc.loop_start,name = 'Recepcion Comandos MQTT', daemon = True)
-        self.mqttThread.start()
+        self.mqttc.loop_start()
+        hiloAlives = threading.Thread(name="hiloAlives",
+                                    target=self.Alives,
+                                    args=(self.diccionario),
+                                    daemon=True
+                                    )
+        hiloAlives.start()
+
 
     def ConfiguracionMQTT(self):
         direccion = MQTT_HOST
@@ -91,17 +100,18 @@ class claseMQTT (object):
         self.mqttc.publish(topic = topic, payload = data,qos=0)
 
     def recepcionMensaje(self, data):
-        data=(str(data[0],data[1]))
+        data=(str(data[0],data[1])) #topic en [0]   , codigo$usuarioID $tamaño
         datos = []
         datos = data[1].decode().split('$')
         if len(datos) == 3:
             ComandoRecibido = datos[0]
-            usuariogrupo = datos[1]
+            usuarioID = datos[1]
             tamañoarchivo = datos[2]
         elif len(datos) == 2:
             ComandoRecibido = datos[0]
-            usuariogrupo = datos[1]
+            usuarioID = datos[1]
         if ComandoRecibido == '\x04':  #RDSS verificamos si es un mensaje de ALIVE
+            self.cambiodeestado(usuarioID)
             logging.info('enviar loggin')
             self.ACK(usuariogrupo)     #RDSS Enviamos un ACK al client
         elif ComandoRecibido == '\x03':  #RDSS verificamos si es un solicitud de transferencia de archivo
@@ -136,15 +146,46 @@ class claseMQTT (object):
         publishText = "Publicacion satisfactoria"
         logging.info(publishText)   
 
+    def segundo (self):
+        formato = "%S"
+        while True:
+            now = datetime.today()
+            tiempo = now.strftime(formato)
+            return tiempo  
 
-############################################################
-#############CONFIGURAMOS ES LOGGING #######################
-############################################################
-#Configuracion inicial de logging
-logging.basicConfig(
-    level = logging.INFO, 
-    format = '[%(levelname)s] (%(threadName)-10s) %(message)s'
-    )
+    def DiccReg (self,archivo):
+        #RDSS nos sirve para obtener los datos del archivo usuarios
+        datos = []
+        lectura = open(archivo,'r')
+        for line in lectura:
+            registro = line.split(',')
+            registro[-1] = registro[-1].replace('\n','')
+            datos.append(registro)
+        lectura.close()
+        #RDSS nos sirve para crear el diccionario a partir de la lista de datos
+        diccionario = {}
+        for i in range(len(datos)):
+            diccionario[datos[i][0]] = [False, int(self.segundo())]
+        return diccionario, registro
+
+    def borrar (self, diccionario):
+        for i in diccionario:    
+            diccionario[i][0]
+            if diccionario[i][1] <= int(self.segundo())-6:
+                diccionario[i] = [False, int(self.segundo())]
+
+    def cambiodeestado (self, usuariosID):
+        self.diccionario[usuariosID] = [True, int(self.segundo())]
+
+    def Alives(self, diccionario):
+        for i in diccionario:
+            if diccionario[i][0]: #[trueofalse, segundo]
+                topic = COMANDOS+'/'+str(GRUPO)+'/'+usuariosID
+                mensaje = COMANDO_ACK+b'$'+bytes(usuariosID,'utf-8')
+                self.mqttc.publish(topic,mensaje,qos,retain)
+            self.borrar(diccionario)
+
+
 ##############################################################
 ################### CLASE SERVIDOR TCP #######################
 ##############################################################
@@ -197,6 +238,8 @@ def TransmisioAudio():
 """
 Examenproyecto980 = claseMQTT()
 Examenproyecto980.ConfiguracionMQTT()
+
+
 
 #while True:
 #    try:

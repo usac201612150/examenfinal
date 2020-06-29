@@ -31,10 +31,10 @@ COMANDO_NO = b'\x07'
 ##############################################################
 ######################## CLASE MQTT ##########################
 ##############################################################
-logging.basicConfig(
-                    level=logging.INFO,
-                    format='[%(levelname)s](%(threadName)-10s) %(message)s'
-                    )
+#logging.basicConfig(
+#                    level=logging.INFO,
+#                    format='[%(levelname)s](%(threadName)-10s) %(message)s'
+#                    )
 
 class claseMQTT (object):
     def __init__(self):
@@ -43,7 +43,7 @@ class claseMQTT (object):
             format='[%(levelname)s](%(threadName)-10s) %(message)s'
         )
         self.logging=logging
-        self.inicioMQTT()
+        #self.inicioMQTT()  #DRRP lo voy a inicializar abajo
         self.ServerTCP = ServerTCP()
         self.ServerTCP.parametrosServer()
         self.diccionario, self.listausuarios, self.listasalas = self.DiccReg(USUARIOS,SALAS)
@@ -75,15 +75,16 @@ class claseMQTT (object):
             TuplaNusuarios = tuple(Nusuarios)   #convertimos la lista a tuplas 
             suscripciones.append(TuplaNusuarios) #agregamos la tupla a la lista de suscripciones
         self.mqttc.subscribe(suscripciones) #nos suscribimos a todos los usuarios que estan en la lista
-        self.mqttc.loop_start()
-        hiloAlives = threading.Thread(name="hiloAlives",
-                                    target=self.Alives,
-                                    daemon=True
-                                    )
-        hiloAlives.start()
-
-    def publishData(self, topic, data): #Publicador simple
-        self.mqttc.publish(topic = topic, payload = data,qos=0)
+        #self.mqttc.loop_start()    DRRP la idea era que corriera en el hilo principal, pero no jalo entonces lo voy a meter a un hilo demonio
+        self.mqttThread=threading.Thread(target=self.mqttc.loop_start,name="MQTT",daemon=True)
+        self.mqttThread.start()
+        
+        
+        #hiloAlives = threading.Thread(name="hiloAlives", DRRP lo voy a iniciar abajo
+        #                            target=self.Alives,
+        #                            daemon=True
+        #                            )
+        #hiloAlives.start()
 
     def inicioMQTT(self):
         direccion = MQTT_HOST
@@ -92,6 +93,16 @@ class claseMQTT (object):
         contrasena = MQTT_PASS
         self.ConfClienteMQTT(direccion,puerto,usuario,contrasena)
         self.suscripcionesTopic()
+        #DRRP el hilo del alive tambien va ser demonio
+        #****************descomentar lo siguinete***************
+        #*******************************************************
+        self.theylive=threading.Thread(target=self.Alives, name="Alive", daemon=True)
+        self.theylive.start()
+        self.interfaz()
+
+    def publishData(self, topic, data): #Publicador simple
+        self.mqttc.publish(topic = topic, payload = data,qos=0)
+
 
     def recepcionMensaje(self, data):
         data=(str(data[0],data[1])) #topic en [0]   , codigo$usuarioID $tamaño
@@ -100,35 +111,40 @@ class claseMQTT (object):
         Ingresotopic = []
         Ingresotopic = data[0].decode().split('/')
         emisor = Ingresotopic[2]
+        self.emisormensaje=emisor
         if len(datos) == 3:
             ComandoRecibido = datos[0]
-            usuarioID = datos[1]
-            tamanoarchivo = datos[2]
+            self.usuariodestino = datos[1]
+            self.tamanoarchivo = datos[2]
         elif len(datos) == 2:
             ComandoRecibido = datos[0]
-            usuarioID = datos[1]
+            self.usuariovivo = datos[1]
+        
         if ComandoRecibido == '\x04':  #RDSS verificamos si es un mensaje de ALIVE
-            self.cambiodeestado(usuarioID)
-            logging.info('enviar loggin')
-            self.ACK(usuarioID)     #RDSS Enviamos un ACK al client
-        elif ComandoRecibido == '\x03' and len(usuarioID)==9:  #RDSS verificamos si es un solicitud de transferencia a un usuario
-            self.OKusuario(usuarioID,emisor,tamanoarchivo)
-        elif ComandoRecibido == '\x03' and len(usuarioID)==5: #RDSS verificamos si es una solicitud de transferencia a una sala
-            self.OKsalas(usuarioID, emisor,tamanoarchivo)
+            self.cambiodeestado(self.usuariovivo)
+            #logging.info('enviar loggin')
+            self.ACK(self.usuariovivo)     #RDSS Enviamos un ACK al client
+        elif ComandoRecibido == '\x03' and len(self.usuariodestino)==9:  #RDSS verificamos si es un solicitud de transferencia a un usuario
+            self.OKusuario(self.usuariodestino,self.emisormensaje,self.tamanoarchivo)
+        elif ComandoRecibido == '\x03' and len(self.usuariodestino)==5: #RDSS verificamos si es una solicitud de transferencia a una sala
+            self.OKsalas(self.usuariodestino, self.emisormensaje,self.tamanoarchivo)
                 #self.NotiparaEnviar(usuariogrupo, tamañoarchivo)
     
     def ACK(self, usuariogrupo, qos=0, retain=False):
-        topic = COMANDOS+'/'+str(GRUPO)+'/'+usuariogrupo
-        mensaje = COMANDO_ACK+b'$'+bytes(usuariogrupo,'utf-8')
+        topic = COMANDOS+'/'+str(GRUPO)+'/'+self.usuariovivo
+        mensaje = COMANDO_ACK+b'$'+bytes(self.usuariovivo,'utf-8')
         self.mqttc.publish(topic,mensaje,qos,retain)
+
     def OK(self, usuariogrupo, qos = 0, retain=False):
         topic = COMANDOS+'/'+str(GRUPO)+'/'+usuariogrupo
         mensaje = COMANDO_OK+b'$'+bytes(usuariogrupo,'utf-8')
         self.mqttc.publish(topic,mensaje,qos,retain)
+
     def NO(self, usuariogrupo, qos = 0, retain=False):
         topic = COMANDOS+'/'+str(GRUPO)+'/'+usuariogrupo
         mensaje = COMANDO_NO+b'$'+bytes(usuariogrupo,'utf-8')
-        self.mqttc.publish(topic,mensaje,qos,retain)   
+        self.mqttc.publish(topic,mensaje,qos,retain)  
+
     def FRR(self, usuariogrupo,tamanoarchivo, qos = 0, retain=False):
         topic = COMANDOS+'/'+str(GRUPO)+'/'+usuariogrupo
         mensaje = COMANDO_FRR+b'$'+bytes(usuariogrupo,'utf-8')+bytes(tamanoarchivo,'utf-8')
@@ -146,10 +162,9 @@ class claseMQTT (object):
 
     def segundo (self):
         formato = "%S"
-        while True:
-            now = datetime.today()
-            tiempo = now.strftime(formato)
-            return tiempo  
+        now = datetime.today()
+        tiempo = now.strftime(formato)
+        return tiempo  
 
     def DiccReg (self,ArchivoUsuarios, ArchivoSalas):
         #RDSS nos sirve para obtener los datos del archivo usuarios
@@ -194,13 +209,18 @@ class claseMQTT (object):
     
     def OKusuario(self, usuarioID, emisor, tamanoarchivo):
         for i in range(len(self.listausuarios)): #RDSS lo utilizamos para recorrer la lista de usuarios
-            if (usuarioID in self.listausuarios[i]) and self.diccionario[usuarioID][0]: #RDSS verificamos si el destinatario esta en la lista y si está activo
+            if (usuarioID in self.listausuarios[i]) and (self.diccionario[usuarioID][0]): #RDSS verificamos si el destinatario esta en la lista y si está activo
                 usuariovalido = True
         if usuariovalido:
             self.OK(emisor)  #RDSS enviamos el acuse de OK al emisor
             self.FRR(usuarioID, tamanoarchivo)
+            self.Audiothread=threading.Thread(name="Audio",target=self.ServerTCP.RecepcionAudio,daemon=False)
+            self.Audiothread.start()
         else:
             self.NO(emisor)
+        ############**********Tanto aqui como en ok salas al final tiene que ir la activacion del hilo de recepcion*****####
+
+
 
     def OKsalas(self, sala, emisor,tamanoarchivo):
         usuariosActivos = 0  #contador que nos servira para saber cuantas personas de la sala estan activas
@@ -213,8 +233,26 @@ class claseMQTT (object):
                     if usuariosActivos > 0:
                         self.OK(emisor)
                         self.FRR(sala,tamanoarchivo)
+                        logging.info("Espera de audio")
+                        self.Audiothread=threading.Thread(name="Audio",target=self.ServerTCP.RecepcionAudio,daemon=False)
+                        self.Audiothread.start()
                     else:
                         self.NO(emisor)
+
+    #DRRP   el servidor no necesita interfaz pero me va servir para ver donde se esta trabando el
+    #       programa, muy probablemente lo deje así 
+
+    def interfaz(self):
+        while True:
+            salida = input("Si desea salir ingrese la palabra 'salir': ") #DRRP como input es una funcion bloqueante 
+            if salida="salir":                                            #     segun yo debería ejecutarse una vez
+                logging.warning("Esta por salir del servidor, los servicios se caeran")#a menos que alguien la toque
+                if self.mqttThread.is_alive():                            #     de esa forma da chance a hacer lo demaas
+                    self.mqttThread._stop()
+                    self.mqttc.disconnect()
+                    sys.exit()
+                
+
 
 ##############################################################
 ################### CLASE SERVIDOR TCP #######################
@@ -228,50 +266,84 @@ class ServerTCP (object):
     
     def inicioServerTCP(self, ip, puerto, sock, usuariocola):
         server_address = (ip,puerto)#RDSS LE DAMOS LOS PARAMETROS DE IP Y PUERTO
-        logging.info('Conectando a {} en el puerto {}'.format(*server_address))
-        sock.bind(server_address) #RDSS Levanta servidor con parametros especificados
-        sock.listen(usuariocola) #RDSS El argumento indica la cantidad de conexiones en cola
+        #logging.info('Conectando a {} en el puerto {}'.format(*server_address))
+        self.sock.bind(server_address) #RDSS Levanta servidor con parametros especificados
+        self.sock.listen(usuariocola) #RDSS El argumento indica la cantidad de conexiones en cola
 
     def parametrosServer(self):
         ip = SERVER_IP
         puerto = SERVER_PORT
+        self.BUFFER_SIZE=BUFFER_SIZE
         usuariocola = 10 #RDSS indica la cantidad de conexiones en cola
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) #RDSS LE INDICAMOS QUE VAMOS A TRABAJAR CON IPV4 Y CON TCP
+        self.sock = socket.socket() #RDSS LE INDICAMOS QUE VAMOS A TRABAJAR CON IPV4 Y CON TCP
         self.inicioServerTCP(ip,puerto,sock,usuariocola)
-"""
-def RecepcionAudio ():
-    while True:
+
+    def RecepcionAudio (self):                          #DRRP metodos de recepcion de audio y envio arreglados
         try:
-            while True:       
-                buff = sock.recv(BUFFER_SIZE)
-                archivo = open('notadevoz.wav','wb')
+            while True:
+                conn, addr= self.sock.accept()
+                buff=conn.recv(self.BUFFER_SIZE)
+                archivo=open("audiotransmision.wav","wb")
                 while buff:
-                    buff = sock.recv(BUFFER_SIZE)
                     archivo.write(buff)
+                    buff=conn.recv(self.BUFFER_SIZE)
                 archivo.close()
+                conn.close()
         finally:
-            sock.close()
+            self.TransmisioAudio()
+                
 
-def TransmisioAudio():
-    try:
-        while True:
-            conn, addr = sock.accept()
-            logging.info("conexion establecida desde: ", addr)
-            logging.info("enviando audio")
-            with open('notadevoz.wav','rb') as env:
-                conn.sendfile(env, 0)
-                env.close()
-            conn.close()
-    finally:
-        sock.close()
+    def TransmisioAudio(self):
+        try:
+            while True:
+                conn, addr = self.sock.accept()
+                logging.info("conexion establecida desde: ", addr)
+                logging.info("enviando audio")
+                with open('audiotransmision.wav','rb') as env:
+                    conn.sendall(env, 0)
+                    env.close()
+                conn.close()
+
+
+
+
+
+
+
+ExamenProyectos980=claseMQTT()
+ExamenProyectos980.inicioMQTT()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 """
 
+"""
+"""
 try: 
     mqtt = claseMQTT()
 except KeyboardInterrupt:
     mqtt.ConfiguracionMQTT.close()
     sys.exit()
-
+"""
 
 
 #while True:

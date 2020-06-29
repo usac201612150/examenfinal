@@ -10,9 +10,6 @@ import os
 import threading
 from DatosBroker import *
 from datetime import datetime, timedelta
-from ConfirmarUsuario import *
-from SuscripcionesTopic import *
-from ComandoMensaje import *
 #############################################################
 ######################   DEFINICIONES  ##########################
 #############################################################
@@ -23,14 +20,13 @@ qos = 2
 
 COMANDOS = 'comandos'
 USUARIOS = 'usuarios'
+SALAS = 'salas'
 GRUPO = 21
 
 COMANDO_FRR = b'\x02'
 COMANDO_ACK = b'\x05'
 COMANDO_OK = b'\x06'
 COMANDO_NO = b'\x07'
-
-Archivo_mensajes = 'mensajes.log' #RDSS aca vamos a guardar los mensajes que llegan de los topics
 
 ##############################################################
 ######################## CLASE MQTT ##########################
@@ -47,12 +43,12 @@ class claseMQTT (object):
             format='[%(levelname)s](%(threadName)-10s) %(message)s'
         )
         self.logging=logging
-        #self.ConfiguracionMQTT()
+        self.inicioMQTT()
         self.ServerTCP = ServerTCP()
         self.ServerTCP.parametrosServer()
-        self.diccionario, self.listausuarios = self.DiccReg(USUARIOS)
+        self.diccionario, self.listausuarios, self.listasalas = self.DiccReg(USUARIOS,SALAS)
 
-    def ConfClienteMQTT(self, address, port, usuario, contrasena):
+    def ConfClienteMQTT(self, address, port, usuario, contrasena): # RDSS setupmqtt, nos conectamos al broker
         self.mqttc = mqtt.Client(clean_session=True)
         self.mqttc.on_message = self.on_message
         self.mqttc.on_connect = self.on_connect
@@ -82,13 +78,14 @@ class claseMQTT (object):
         self.mqttc.loop_start()
         hiloAlives = threading.Thread(name="hiloAlives",
                                     target=self.Alives,
-                                    args=(self.diccionario),
                                     daemon=True
                                     )
         hiloAlives.start()
 
+    def publishData(self, topic, data): #Publicador simple
+        self.mqttc.publish(topic = topic, payload = data,qos=0)
 
-    def ConfiguracionMQTT(self):
+    def inicioMQTT(self):
         direccion = MQTT_HOST
         puerto = MQTT_PORT
         usuario = MQTT_USER
@@ -96,27 +93,28 @@ class claseMQTT (object):
         self.ConfClienteMQTT(direccion,puerto,usuario,contrasena)
         self.suscripcionesTopic()
 
-    def publishData(self, topicName, data): #Publicador simple
-        self.mqttc.publish(topic = topic, payload = data,qos=0)
-
     def recepcionMensaje(self, data):
         data=(str(data[0],data[1])) #topic en [0]   , codigo$usuarioID $tamaño
         datos = []
         datos = data[1].decode().split('$')
+        Ingresotopic = []
+        Ingresotopic = data[0].decode().split('/')
+        emisor = Ingresotopic[2]
         if len(datos) == 3:
             ComandoRecibido = datos[0]
             usuarioID = datos[1]
-            tamañoarchivo = datos[2]
+            tamanoarchivo = datos[2]
         elif len(datos) == 2:
             ComandoRecibido = datos[0]
             usuarioID = datos[1]
         if ComandoRecibido == '\x04':  #RDSS verificamos si es un mensaje de ALIVE
             self.cambiodeestado(usuarioID)
             logging.info('enviar loggin')
-            self.ACK(usuariogrupo)     #RDSS Enviamos un ACK al client
-        elif ComandoRecibido == '\x03':  #RDSS verificamos si es un solicitud de transferencia de archivo
-            if self.confirmacion:
-                pass
+            self.ACK(usuarioID)     #RDSS Enviamos un ACK al client
+        elif ComandoRecibido == '\x03' and len(usuarioID)==9:  #RDSS verificamos si es un solicitud de transferencia a un usuario
+            self.OKusuario(usuarioID,emisor,tamanoarchivo)
+        elif ComandoRecibido == '\x03' and len(usuarioID)==5: #RDSS verificamos si es una solicitud de transferencia a una sala
+            self.OKsalas(usuarioID, emisor,tamanoarchivo)
                 #self.NotiparaEnviar(usuariogrupo, tamañoarchivo)
     
     def ACK(self, usuariogrupo, qos=0, retain=False):
@@ -131,9 +129,9 @@ class claseMQTT (object):
         topic = COMANDOS+'/'+str(GRUPO)+'/'+usuariogrupo
         mensaje = COMANDO_NO+b'$'+bytes(usuariogrupo,'utf-8')
         self.mqttc.publish(topic,mensaje,qos,retain)   
-    def FRR(self, usuariogrupo, qos = 0, retain=False):
+    def FRR(self, usuariogrupo,tamanoarchivo, qos = 0, retain=False):
         topic = COMANDOS+'/'+str(GRUPO)+'/'+usuariogrupo
-        mensaje = COMANDO_FRR+b'$'+bytes(usuariogrupo,'utf-8')+bytes(tamañoarchivo,'utf-8')
+        mensaje = COMANDO_FRR+b'$'+bytes(usuariogrupo,'utf-8')+bytes(tamanoarchivo,'utf-8')
         self.mqttc.publish(topic,mensaje,qos,retain)
 
     def on_connect(self, client, userdata, rc): 
@@ -153,38 +151,70 @@ class claseMQTT (object):
             tiempo = now.strftime(formato)
             return tiempo  
 
-    def DiccReg (self,archivo):
+    def DiccReg (self,ArchivoUsuarios, ArchivoSalas):
         #RDSS nos sirve para obtener los datos del archivo usuarios
         datos = []
-        lectura = open(archivo,'r')
+        datossala = []
+        lectura = open(ArchivoUsuarios,'r')
         for line in lectura:
             registro = line.split(',')
             registro[-1] = registro[-1].replace('\n','')
             datos.append(registro)
         lectura.close()
-        #RDSS nos sirve para crear el diccionario a partir de la lista de datos
-        diccionario = {}
+        diccionario = {}      #RDSS nos sirve para crear el diccionario a partir de la lista de datos
         for i in range(len(datos)):
             diccionario[datos[i][0]] = [False, int(self.segundo())]
-        return diccionario, registro
+        #RDSS vamos a hacer una lista con todas las salas validas para el grupo 21S
+        leer = open(ArchivoSalas,'r')
+        salas = []
+        for linea in leer:
+            salas.append(linea)
+        leer.close()
+        for i in range(len(salas)):
+            salas[i] = salas[i].replace('\n','')
+        return diccionario, registro, salas #Regresamos un Diccionario para alives, Lista de usuarios, Lista de salas
 
     def borrar (self, diccionario):
         for i in diccionario:    
-            diccionario[i][0]
             if diccionario[i][1] <= int(self.segundo())-6:
                 diccionario[i] = [False, int(self.segundo())]
 
     def cambiodeestado (self, usuariosID):
         self.diccionario[usuariosID] = [True, int(self.segundo())]
 
-    def Alives(self, diccionario):
-        for i in diccionario:
-            if diccionario[i][0]: #[trueofalse, segundo]
-                topic = COMANDOS+'/'+str(GRUPO)+'/'+usuariosID
-                mensaje = COMANDO_ACK+b'$'+bytes(usuariosID,'utf-8')
-                self.mqttc.publish(topic,mensaje,qos,retain)
-            self.borrar(diccionario)
+    def Alives(self):
+        while True:
+            for i in self.diccionario:
+                if self.diccionario[i][0]: #[trueofalse]
+                    usuariosID = self.diccionario[i]
+                    topic = COMANDOS+'/'+str(GRUPO)+'/'+usuariosID
+                    mensaje = COMANDO_ACK+b'$'+bytes(usuariosID,'utf-8')
+                    self.mqttc.publish(topic,mensaje)
+                self.borrar(self.diccionario)
+    
+    def OKusuario(self, usuarioID, emisor, tamanoarchivo):
+        for i in range(len(self.listausuarios)): #RDSS lo utilizamos para recorrer la lista de usuarios
+            if (usuarioID in self.listausuarios[i]) and self.diccionario[usuarioID][0]: #RDSS verificamos si el destinatario esta en la lista y si está activo
+                usuariovalido = True
+        if usuariovalido:
+            self.OK(emisor)  #RDSS enviamos el acuse de OK al emisor
+            self.FRR(usuarioID, tamanoarchivo)
+        else:
+            self.NO(emisor)
 
+    def OKsalas(self, sala, emisor,tamanoarchivo):
+        usuariosActivos = 0  #contador que nos servira para saber cuantas personas de la sala estan activas
+        if sala in self.listasalas: #RDSS Nos indica si es una sala valida para dentro de 21S01 a 21S99
+            for i in range(len(self.listausuarios)): #RDSS recorremos la lista de usuarios 
+                if (emisor in self.listausuarios[i]) and (sala in self.listausuarios[i]):#RDSS buscamos si el emisor pertenece a la sala a donde quiere enviar
+                    for j in range(len(self.listausuarios)): #volvemos a recorrer la lista de usuarios pero ahora para buscar los usuarios de la sala
+                        if (sala in self.listausuarios[j]) and self.diccionario[self.listausuarios[j][0]][0]: #si la sala esta en cierta linea 201612150,Rubén Simon, 21S01
+                            usuariosActivos = usuariosActivos + 1 #si está activo va a sumar 1 al contador
+                    if usuariosActivos > 0:
+                        self.OK(emisor)
+                        self.FRR(sala,tamanoarchivo)
+                    else:
+                        self.NO(emisor)
 
 ##############################################################
 ################### CLASE SERVIDOR TCP #######################
@@ -208,7 +238,6 @@ class ServerTCP (object):
         usuariocola = 10 #RDSS indica la cantidad de conexiones en cola
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) #RDSS LE INDICAMOS QUE VAMOS A TRABAJAR CON IPV4 Y CON TCP
         self.inicioServerTCP(ip,puerto,sock,usuariocola)
-        
 """
 def RecepcionAudio ():
     while True:
@@ -236,8 +265,12 @@ def TransmisioAudio():
     finally:
         sock.close()
 """
-Examenproyecto980 = claseMQTT()
-Examenproyecto980.ConfiguracionMQTT()
+
+try: 
+    mqtt = claseMQTT()
+except KeyboardInterrupt:
+    mqtt.ConfiguracionMQTT.close()
+    sys.exit()
 
 
 

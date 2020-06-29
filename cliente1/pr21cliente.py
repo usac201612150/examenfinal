@@ -106,8 +106,8 @@ class MyMQTTClass(object):                                                  #DRR
         self.BUFFER_SIZE=BUFFER_SIZE
         self.setupMQTTClient(Host,Puerto,nombre,contra)
         self.subscribeMe()
-        self.keepAliveThread=threading.Thread(target=self.mqttAlive,name="Alive",daemon=True)
-        self.keepAliveThread.start()                                        #Notese la forma en la que se crea el hilo del ALIVE
+        #self.keepAliveThread=threading.Thread(target=self.mqttAlive,name="Alive",daemon=True)
+        #self.keepAliveThread.start()                                        #Notese la forma en la que se crea el hilo del ALIVE
         self.interfaz()                     #Aqui ya empieza el bucle del programa
 
     def publishData(self, topic,data):                                      #DRRP   Metodo que publicara en los topics correspondientes
@@ -216,12 +216,12 @@ class MyMQTTClass(object):                                                  #DRR
         print("\n\nBienvenido al chat de proyectos980")                     #       es el encargado del loop principal
         print("Cifrado de punto a punto")                                   #       y negociaciones con otras clases
         kygen=input("Ingrese la llave: ")
-        kygen.encode()
-        self.TopSecret=TopSecret(kygen)                                                                   
+        kygen2=kygen.encode()
+        self.TopSecret=TopSecret(kygen2)                                                                   
         try:                                                                
             while True:
-                instruccion=input("Presiona enter para ver opciones o ingresa un comando: ")
-                if instruccion=="\n":   
+                instruccion=input("Ingresa 0 para ver opciones o ingresa un comando: ")
+                if instruccion=="0":   
                     self.instru.inicial()
                 elif instruccion=="1a":     #Mensaje Directo
                     destin,mensaje=self.instru.direct()
@@ -296,7 +296,8 @@ class Instructions(object):                                                 #DRR
         print("para su uso favor ingresar a una de las siguientes ramas")
         print("\t1. Enviar texto \n\t\ta.Enviar mensaje directo\n\t\tb.Enviar a una sala")
         print("\t2. Enviar nota de voz")
-        print("\t3. Desconectarme")
+        print("\t3. Cifrado")
+        print("\t4. Desconectarme")
 
     def direct(self):                                                       #DRRP   Establecimiento de mensaje directo
         Destinatario=input("Destinatario:")

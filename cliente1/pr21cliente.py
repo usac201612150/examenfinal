@@ -16,19 +16,22 @@ import os
 import threading
 import sys
 import socket
+from Crypto.Cipher import AES
+import hashlib
+
 ##########################################################################
 ####################         DEFINICIONES           ######################
 ########################################################################## #DRRP
 grupo=21
 
-MQTT_HOST = "104.196.52.230"#"167.71.243.238"            #Necesarios para MQTT
+MQTT_HOST = "167.71.243.238"            #Necesarios para MQTT
 MQTT_PORT = 1883
-MQTT_USER = "Saul"#"proyectos"
-MQTT_PASS = "silvacdc"#"proyectos980"
+MQTT_USER = "proyectos"
+MQTT_PASS = "proyectos980"
 qos = 2
 
-TCP_HOST="104.196.52.230"#"167.71.243.238"               #Necesarias para la transferencia de archivos
-TCP_PORT=9800#9821 
+TCP_HOST="167.71.243.238"               #Necesarias para la transferencia de archivos
+TCP_PORT=9821 
 BUFFER_SIZE=64*1024
 
 ItLives=2                               #2segundos para ALIVE
@@ -39,6 +42,7 @@ EstoyMuriendo=False                     #Bandera de ALIVE
 COMANDOS="comandos"                     #Definicion para archivos
 USUARIOS="usuarios"
 SALAS="salas"
+
 ##########################################################################
 ####################           Clases              #######################
 ##########################################################################
@@ -54,7 +58,7 @@ class MyMQTTClass(object):                                                  #DRR
         self.ItLives=ItLives                                                #       Definiciones de tiempo en el ALIVE
         self.AmIDead=AmIDead
         self.instru=Instructions()                                          #DRRP   Instancia de la clase Instruccions
-        #self.initMQTTClient()                                               
+        self.pwd=True                                               
  
     def Whatsmyname(self):                                                  #DRRP   Define el user id
         file=open(USUARIOS,"r")
@@ -152,6 +156,8 @@ class MyMQTTClass(object):                                                  #DRR
                 buf=sock.recv(self.BUFFER_SIZE)
             archivo.close()
             sock.close()
+            if self.pwd:
+                self.TopSecret.decifaudio("notaentrante.wav")
             os.system("aplay notaentrante.wav")
         except InterruptedError:
             logging.warning("Ha ocurrido un error en la transmision")
@@ -162,8 +168,9 @@ class MyMQTTClass(object):                                                  #DRR
     def mensajeria(self,data):                                              #DRRP   metodo que manejara los topics y redirigira en caso 
         data=(str(data[0]),data[1])                                         #       sea necesario.
         registro=[]
-        trama=data[1].decode("utf-8")
+        
         if data[0][:8]==COMANDOS:
+            trama=data[1].decode("utf-8")
             registro=trama.split("$")       #DRRP   Se aprovecha la ventaja del split para trabajar mas rapido
             if registro[-1]==self.userid:
                 if registro[0]=="\x05":
@@ -180,9 +187,17 @@ class MyMQTTClass(object):                                                  #DRR
                     self.Audiothread.start()
         elif data[0][:5]==SALAS:
             logging.info("Se ha recibido un mensaje de la sala "+data[0][9:14])
+            if self.pwd:
+                trama=self.TopSecret.deciftxt(data[1])
+            else:
+                trama=data[1].decode("utf-8")
             logging.info(trama)
         elif data[0][:8]==USUARIOS:
             logging.info("Se recibió un mensaje para usted")
+            if self.pwd:
+                trama=self.TopSecret.deciftxt(data[1])
+            else:
+                trama=data[1].decode("utf-8")
             logging.info(trama)
 
 ########################
@@ -199,7 +214,11 @@ class MyMQTTClass(object):                                                  #DRR
     
     def interfaz(self):                                                     #DRRP   Metodo que trabaja toda la interfaz
         print("\n\nBienvenido al chat de proyectos980")                     #       es el encargado del loop principal
-        try:                                                                #       y negociaciones con otras clases
+        print("Cifrado de punto a punto")                                   #       y negociaciones con otras clases
+        kygen=input("Ingrese la llave: ")
+        kygen.encode()
+        self.TopSecret=TopSecret(kygen)                                                                   
+        try:                                                                
             while True:
                 instruccion=input("Presiona enter para ver opciones o ingresa un comando: ")
                 if instruccion=="\n":   
@@ -207,10 +226,14 @@ class MyMQTTClass(object):                                                  #DRR
                 elif instruccion=="1a":     #Mensaje Directo
                     destin,mensaje=self.instru.direct()
                     Destinatario=USUARIOS+"/"+str(grupo)+"/"+destin
+                    if self.pwd:
+                        mensaje=self.TopSecret.ciftxt(mensaje)
                     self.publishData(Destinatario,mensaje)
                 elif instruccion=="1b":     #Mensaje a grupo
                     destin, mensaje=self.instru.grupo()
                     Destinatario=SALAS+"/"+str(grupo)+"/"+destin
+                    if self.pwd:
+                        mensaje=self.TopSecret.ciftxt(mensaje)
                     self.publishData(Destinatario,mensaje)
                 elif instruccion=="2":      #Audio
                     destin, peso, recordflag=self.instru.audiorec()
@@ -218,6 +241,8 @@ class MyMQTTClass(object):                                                  #DRR
                         logging.info("Espere la validacion del servidor. . . . .")
                         self.IwantToBreakFree(destin,peso)
                         time.sleep(5)
+                        if self.pwd:
+                            self.TopSecret.cifaudio("notadevoz.wav")
                         if self.BanderaAudio:
                             logging.info("Se transmitira el audio, por favor espere.")
                             sock=socket.socket()
@@ -234,7 +259,20 @@ class MyMQTTClass(object):                                                  #DRR
                     else:
                         logging.warning("Su transmisión ha sido rechazada, intentelo más tarde")
 
-
+                elif instruccion=="3":  #Cifrado
+                    if self.pwd:
+                        encender=input("El cifrado está encendido, desea apagarlo: S/N")
+                        if encender=="S":
+                            self.pwd==False
+                            print("Apagado")
+                        else:
+                            pass
+                    else:
+                        encender=input("El cifrado está apagado, desea encenderlo: S/N")
+                        if encender=="S":
+                            self.pwd==True
+                            print("Encendido")
+                    
                 elif instruccion=="4":      #Desconectarme
                     self.instru.goodbye()
                     self.mqttc.disconnect()
@@ -288,6 +326,56 @@ class Instructions(object):                                                 #DRR
 
     def goodbye(self):
         print("Vaya una pena que te vayas, vuelve pronto")
+
+#Referencia https://www.youtube.com/watch?v=SoeeCg04-FA
+class TopSecret(object):
+    def __init__(self,password):
+        self.key=hashlib.sha256(password).digest()
+        self.mode=AES.MODE_CBC
+        self.IV='Stringde16Roche!'
+
+    def pad_message(self,mensaje):
+        while len(message)%16!=0:
+            message=message+" "
+        return message
+
+    def ciftxt(self,mensaje):
+        cipher=AES.new(self.key,self.mode,self.IV)
+        rightlen=self.pad_message(mensaje)
+        encriptado=cipher.encrypt(rightlen)
+        return encriptado
+
+    def deciftxt(self,mensaje):
+        cipher=AES.new(self.key,self.mode,self.IV)
+        decrypted_text=cipher.decrypt(mensaje)
+        decrypted_text.rstrip().decode()
+        return decrypted_text
+    
+    def pad_audio(self,file):
+        while len(file)%16 !=0:
+            file = file +b'0'
+        return file
+
+    def cifaudio(self,audio):
+        cipher=AES.new(self.key,self.mode,self.IV)
+        with open(audio,"rb") as f:
+            data=f.read()
+        rightlen=self.pad_audio(data)
+        f.close()
+        encriptado=cipher.encrypt(rightlen)
+        with open(audio,"wb") as f:
+            f.write(encriptado)
+        f.close()
+    
+    def decifaudio(self,audio):
+        cipher=AES.new(self.key,self.mode,self.IV)
+        with open(audio,"rb") as f:
+            data=f.read()
+        decrypted_file = cipher.decrypt(data)
+        f.close()
+        with open(audio,"wb") as f:
+            f.write(decrypted_file.rstrip(b'0'))
+
 
 
 ExamenProyectos980=MyMQTTClass()

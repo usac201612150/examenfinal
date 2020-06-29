@@ -217,7 +217,7 @@ class MyMQTTClass(object):                                                  #DRR
         print("Cifrado de punto a punto")                                   #       y negociaciones con otras clases
         kygen=input("Ingrese la llave: ")
         kygen2=kygen.encode()
-        self.TopSecret=TopSecret(kygen2)                                                                   
+        self.secretin=TopSecret(kygen2)                                                                   
         try:                                                                
             while True:
                 instruccion=input("Ingresa 0 para ver opciones o ingresa un comando: ")
@@ -227,8 +227,10 @@ class MyMQTTClass(object):                                                  #DRR
                     destin,mensaje=self.instru.direct()
                     Destinatario=USUARIOS+"/"+str(grupo)+"/"+destin
                     if self.pwd:
-                        mensaje=self.TopSecret.ciftxt(mensaje)
-                    self.publishData(Destinatario,mensaje)
+                        mensajecif=self.secretin.ciftxt(mensaje)
+                        self.publishData(Destinatario,mensajecif)
+                    else:
+                        self.publishData(Destinatario,mensaje)
                 elif instruccion=="1b":     #Mensaje a grupo
                     destin, mensaje=self.instru.grupo()
                     Destinatario=SALAS+"/"+str(grupo)+"/"+destin
@@ -261,16 +263,16 @@ class MyMQTTClass(object):                                                  #DRR
 
                 elif instruccion=="3":  #Cifrado
                     if self.pwd:
-                        encender=input("El cifrado está encendido, desea apagarlo: S/N")
+                        encender=input("El cifrado está encendido, desea apagarlo: S/N  ")
                         if encender=="S":
-                            self.pwd==False
+                            self.pwd=False
                             print("Apagado")
                         else:
                             pass
                     else:
-                        encender=input("El cifrado está apagado, desea encenderlo: S/N")
+                        encender=input("El cifrado está apagado, desea encenderlo: S/N  ")
                         if encender=="S":
-                            self.pwd==True
+                            self.pwd=True
                             print("Encendido")
                     
                 elif instruccion=="4":      #Desconectarme

@@ -7,6 +7,7 @@ import logging
 import socket
 import binascii
 import os 
+import sys
 import threading
 from DatosBroker import *
 from datetime import datetime, timedelta
@@ -245,12 +246,13 @@ class claseMQTT (object):
     def interfaz(self):
         while True:
             salida = input("Si desea salir ingrese la palabra 'salir': ") #DRRP como input es una funcion bloqueante 
-            if salida="salir":                                            #     segun yo debería ejecutarse una vez
+            if salida=="salir":                                            #     segun yo debería ejecutarse una vez
                 logging.warning("Esta por salir del servidor, los servicios se caeran")#a menos que alguien la toque
                 if self.mqttThread.is_alive():                            #     de esa forma da chance a hacer lo demaas
                     self.mqttThread._stop()
-                    self.mqttc.disconnect()
-                    sys.exit()
+                self.mqttc.disconnect()
+                sys.exit()
+                    
                 
 
 
@@ -276,7 +278,7 @@ class ServerTCP (object):
         self.BUFFER_SIZE=BUFFER_SIZE
         usuariocola = 10 #RDSS indica la cantidad de conexiones en cola
         self.sock = socket.socket() #RDSS LE INDICAMOS QUE VAMOS A TRABAJAR CON IPV4 Y CON TCP
-        self.inicioServerTCP(ip,puerto,sock,usuariocola)
+        self.inicioServerTCP(ip,puerto,self.sock,usuariocola)
 
     def RecepcionAudio (self):                          #DRRP metodos de recepcion de audio y envio arreglados
         try:
@@ -303,19 +305,12 @@ class ServerTCP (object):
                     conn.sendall(env, 0)
                     env.close()
                 conn.close()
+        finally:
+            logging.info("Enviado")
 
 
-
-
-
-
-
-ExamenProyectos980=claseMQTT()
-ExamenProyectos980.inicioMQTT()
-
-
-
-
+examenproyectos980=claseMQTT()
+examenproyectos980.inicioMQTT()
 
 
 
@@ -334,9 +329,11 @@ ExamenProyectos980.inicioMQTT()
 
 
 
-"""
 
-"""
+
+
+
+
 """
 try: 
     mqtt = claseMQTT()

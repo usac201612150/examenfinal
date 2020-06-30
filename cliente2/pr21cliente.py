@@ -1,6 +1,9 @@
+#Diego Roberto Roche Palacios
+#Rubén David Simón Sicá
+
 """                                                                        #DRRP
 Este codigo debe ser copiado a una carpeta en la que existan los siguientes archivos:
-    -usuario (Dentro de el, ingresar 201603188 o 201612150)
+    -usuarios (Dentro de el, ingresar 201603188 o 201612150)
     -salas   (Dentro de el, ingresar salas validas Ej: 21S01)
 """
 ########################################################################## 
@@ -13,246 +16,372 @@ import os
 import threading
 import sys
 import socket
+from Crypto.Cipher import AES
+import hashlib
+
 ##########################################################################
 ####################         DEFINICIONES           ######################
 ########################################################################## #DRRP
-CLIENTE="cliente1"            #Prioritario cambiarlo para distintos clientes
 grupo=21
 
-MQTT_HOST = "167.71.243.238" #Necesarios para MQTT
+MQTT_HOST = "167.71.243.238"            #Necesarios para MQTT
 MQTT_PORT = 1883
 MQTT_USER = "proyectos"
 MQTT_PASS = "proyectos980"
 qos = 2
 
-TCP_HOST="167.71.243.238"
+TCP_HOST="167.71.243.238"               #Necesarias para la transferencia de archivos
 TCP_PORT=9821 
 BUFFER_SIZE=64*1024
 
-COMMAND_FTR=b'\x03'         #Definicion de comandos
-COMMAND_ALIVE=b'\x04'
+ItLives=2                               #2segundos para ALIVE
+AmIDead=0.1                             #0.1segundos para ALIVE
+dead=0                                  #Contador de ALIVE
+EstoyMuriendo=False                     #Bandera de ALIVE
 
-ItLives=2                   #2segundos para ALIVE
-AmIDead=0.1                 #0.1segundos para ALIVE
-dead=0                      #Contador de ALIVE
-EstoyMuriendo=False         #Bandera de ALIVE
-
-COMANDOS="comandos"         #Definicion para archivos
+COMANDOS="comandos"                     #Definicion para archivos
 USUARIOS="usuarios"
 SALAS="salas"
+
 ##########################################################################
-####################        METODOS#               #######################
+####################           Clases              #######################
 ##########################################################################
-class Instructions(object):                                                #DRRP Clase para el manejo de las instruciones
-    def __init__(self, comando):
+class MyMQTTClass(object):                                                  #DRRP   Clase que maneja el proceso principal
+    def __init__(self):                                                     #       Configuracion de las instancias
+        logging.basicConfig(                                                #       Indica como trabajara el logging
+            level=logging.INFO,
+            format='[%(levelname)s] (%(threadName)-10s) %(message)s'
+        )
+        #self.logging=logging                                                #DRRP   No estoy seguro si es necesario declararlo así
+        self.dead=dead                                                      #       contador para el ALIVE
+        self.EstoyMuriendo=EstoyMuriendo                                    #       bandera para el ALIVE
+        self.ItLives=ItLives                                                #       Definiciones de tiempo en el ALIVE
+        self.AmIDead=AmIDead
+        self.instru=Instructions()                                          #DRRP   Instancia de la clase Instruccions
+        self.pwd=True                                               
+                #***Desactivada de momento****#
+    def Whatsmyname(self):                                                  #DRRP   Define el user id
+        file=open(USUARIOS,"r")
+        for line in file:
+            Yosoy=line
+            Yosoy=Yosoy.replace("\n","")
+        file.close()
+        return Yosoy
+
+    def setupMQTTClient(self,address,port,usuario,contraseña):              #DRRP   Configuraciones iniciales del cliente de MQTT
+        self.userid=self.Whatsmyname()
+        self.mqttc=mqtt.Client(clean_session=True)
+        self.mqttc.on_message=self.on_message
+        self.mqttc.on_connect=self.on_connect
+        self.mqttc.on_publish=self.on_publish
+        self.mqttc.username_pw_set(usuario,contraseña)
+        self.mqttc.connect(address,port)
+    #notese que se configuro el cliente de manera que pudiera ser alcanzado por toda la clase
+    def subscribeMe(self):                                                  #DRRP   Metodo que realiza las suscripciones
+        file=open(SALAS,"r")
+        finallist=[]
+        for i in file:
+            newlist=[]
+            text=SALAS+"/"+str(grupo)+"/"+str(i)
+            text=text.replace("\n","")
+            newlist.append(text)            #Dado que la forma en la que suscribe el metodo
+            newlist.append(qos)             #recibe una tupla dentro de una lista, ej: finallist=[(text,qos),(text,qos),(text,qos)]
+            finallist.append(tuple(newlist))
+        file.close()
+        self.mqttc.subscribe(finallist)                                     #Aprovecho este metodo para suscribir tanto para salas
+        userTopic=USUARIOS+"/"+str(grupo)+"/"+self.userid                   #como para el usuario y sus comandos
+        self.mqttc.subscribe(userTopic)
+        commandTopic=COMANDOS+"/"+str(grupo)+"/"+self.userid
+        self.mqttc.subscribe(commandTopic)
+        self.mqttThread=threading.Thread(target=self.mqttc.loop_start,name="Recepcion mensajes MQTT",daemon=True)
+        self.mqttThread.start()                                             #Tambien se inicia el hilo del mqtt cliente
+
+    def initMQTTClient(self):                                               #DRRP   Metodo que inicializa toda la magia
+        Host = MQTT_HOST
+        Puerto = MQTT_PORT 
+        nombre = MQTT_USER
+        contra = MQTT_PASS
+        self.TCP_HOST=TCP_HOST
+        self.TCP_PORT=TCP_PORT
+        self.BUFFER_SIZE=BUFFER_SIZE
+        self.setupMQTTClient(Host,Puerto,nombre,contra)
+        self.subscribeMe()
+        #self.keepAliveThread=threading.Thread(target=self.mqttAlive,name="Alive",daemon=True)
+        #self.keepAliveThread.start()                                        #Notese la forma en la que se crea el hilo del ALIVE
+        self.interfaz()                     #Aqui ya empieza el bucle del programa
+
+    def publishData(self, topic,data):                                      #DRRP   Metodo que publicara en los topics correspondientes
+        self.mqttc.publish(topic=topic,payload=data,qos=0)
+    
+    def IwantToBreakFree(self,destin,filesize,qos=0,retain=False):
+        topic=COMANDOS+"/"+str(grupo)+"/"+self.userid
+        mensaje=b'\x03'+b'$'+bytes(destin,"utf-8")+b'$'+bytearray(filesize,"utf-8")
+        self.mqttc.publish(topic,mensaje,qos,retain)
+
+    def clientevivo(self,qos=0,retain=False):                               #DRRP   Se publica el ALIVE (\x04)
+        topic=COMANDOS+"/"+str(grupo)+"/"+self.userid
+        mensaje=b'\x04'+b'$'+bytes(self.userid,"utf-8")
+        self.mqttc.publish(topic,mensaje,qos,retain)
+
+    def mqttAlive(self):
+        while True:
+            self.clientevivo()
+            self.dead+=1
+            if self.dead>200:               #DRRP   Aqui hubo un pequeño bug que no supe solucionar de otra forma
+                logging.critical("¡Vaya! Te has desconectado del servidor. \nPara continuar reinicia el programa.")
+                sys.exit()
+            elif self.dead==3:                                              #DRRP   La logica de esto es que cada ALIVE genera un dead
+                self.EstoyMuriendo=True                                     #       que si llega un ACK lo cancela, si el dead llega a 3
+                time.sleep(self.ItLives)                                    #       se levanta la bandera EstoyMuriendo para que el tiempo
+                logging.info("cool im alive")
+            elif self.EstoyMuriendo==True and self.dead <=200:              #       del alive sea menor. En caso se restablezca la conexion
+                time.sleep(self.AmIDead)                                    #       la bandera y el contador seran reseteados.
+            elif dead<=3:                                                   #       Notese que se cumplen con los tiempos estipulados pues
+                time.sleep(self.ItLives)                                    #       en 20s habran aprox 200 dead.
+            else:
+                logging.critical("¡Vaya! Te has desconectado del servidor. \nPara continuar reinicia el programa.")
+                sys.exit()
+                break
+    
+    def RecepAudio(self,lista):
+        logging.info("Se ha recibido un audio de: "+str(lista[1])+" de tamaño: "+str(lista[2]))
+        logging.info("Se reproducira en unos momentos.....")
+        sock=socket.socket()
+        sock.connect((self.TCP_HOST,self.TCP_PORT))
+        try:
+            buf=sock.recv(self.BUFFER_SIZE)
+            archivo=open("notaentrante.wav","wb")
+            while buf:
+                archivo.write(buf)
+                buf=sock.recv(self.BUFFER_SIZE)
+            archivo.close()
+            sock.close()
+            if self.pwd:
+                self.TopSecret.decifaudio("notaentrante.wav")
+            os.system("aplay notaentrante.wav")
+        except InterruptedError:
+            logging.warning("Ha ocurrido un error en la transmision")
+        finally:
+            sock.close()
+        
+
+    def mensajeria(self,data):                                              #DRRP   metodo que manejara los topics y redirigira en caso 
+        data=(str(data[0]),data[1])                                         #       sea necesario.
+        registro=[]
+        
+        if data[0][:8]==COMANDOS:
+            trama=data[1].decode("utf-8")
+            registro=trama.split("$")       #DRRP   Se aprovecha la ventaja del split para trabajar mas rapido
+            if registro[-1]==self.userid:
+                if registro[0]=="\x05":
+                    self.EstoyMuriendo=False    #DRRP   Apaga bandera que acelera el tiempo
+                    self.dead=0                 #       Tambien coloca en 0 el contador del ALIVE
+                elif registro[0]=="\x06":
+                    self.BanderaAudio=True      #DRRP   servidor acepta el intercambio de audio
+                    self.BanderaHoldOn=False    #       apaga la espera del servidor
+                elif registro[0]=="\x07":
+                    self.BanderaAudio=False     #DRRP   servidor deniega el intercambio de audio
+                    self.BanderaHoldOn=False    #       apaga la espera del servidor
+                elif registro[0]=="\x02":
+                    self.Audiothread=threading.Thread(name="Recepcion audio",target=RecepAudio,args=registro,daemon=False)
+                    self.Audiothread.start()
+        elif data[0][:5]==SALAS:
+            logging.info("Se ha recibido un mensaje de la sala "+data[0][9:14])
+            if self.pwd:
+                trama=self.TopSecret.deciftxt(data[1])
+            else:
+                trama=data[1].decode("utf-8")
+            logging.info(trama)
+        elif data[0][:8]==USUARIOS:
+            logging.info("Se recibió un mensaje para usted")
+            if self.pwd:
+                trama=self.TopSecret.deciftxt(data[1])
+            else:
+                trama=data[1].decode("utf-8")
+            logging.info(trama)
+
+########################
+########################
+
+    def on_message(self, mqttc,obj,msg):    #DRRP   metodo exlusivo de MQTT (redirige la informacion)
+        self.mensajeria((msg.topic,msg.payload))
+        
+    def on_connect(self,mqttc,obj,flags,rc):#DRRP   metodo exlusivo de MQTT, indica la coneccion
+        logging.info("Conectado correctamente")
+    
+    def on_publish(self,mqttc,obj,mid):     #DRRP   metodo exlusivo de MQTT, indica si la publicacion fue satisfactoria
+        logging.debug("Publicacion exitosa")
+    
+    def interfaz(self):                                                     #DRRP   Metodo que trabaja toda la interfaz
+        print("\n\nBienvenido al chat de proyectos980")                     #       es el encargado del loop principal
+        print("Cifrado de punto a punto")                                   #       y negociaciones con otras clases
+        kygen=input("Ingrese la llave: ")
+        kygen2=kygen.encode()
+        self.secretin=TopSecret(kygen2)                                                                   
+        try:                                                                
+            while True:
+                instruccion=input("Ingresa 0 para ver opciones o ingresa un comando: ")
+                if instruccion=="0":   
+                    self.instru.inicial()
+                elif instruccion=="1a":     #Mensaje Directo
+                    destin,mensaje=self.instru.direct()
+                    Destinatario=USUARIOS+"/"+str(grupo)+"/"+destin
+                    if self.pwd:
+                        mensajecif=self.secretin.ciftxt(mensaje)
+                        self.publishData(Destinatario,mensajecif)
+                    else:
+                        self.publishData(Destinatario,mensaje)
+                elif instruccion=="1b":     #Mensaje a grupo
+                    destin, mensaje=self.instru.grupo()
+                    Destinatario=SALAS+"/"+str(grupo)+"/"+destin
+                    if self.pwd:
+                        mensaje=self.TopSecret.ciftxt(mensaje)
+                    self.publishData(Destinatario,mensaje)
+                elif instruccion=="2":      #Audio
+                    destin, peso, recordflag=self.instru.audiorec()
+                    if recordflag:
+                        logging.info("Espere la validacion del servidor. . . . .")
+                        self.IwantToBreakFree(destin,str(peso))
+                        time.sleep(10)
+                        if self.pwd:
+                            self.TopSecret.cifaudio("notadevoz.wav")
+                        if self.BanderaAudio:
+                            logging.info("Se transmitira el audio, por favor espere.")
+                            sock=socket.socket()
+                            sock.connect((self.TCP_HOST,self.TCP_PORT))
+                            try:
+                                with open("notadevoz.wav","rb") as audio:
+                                    sock.sendall(audio)
+                                audio.close()
+                                sock.close()
+                            except InterruptedError:
+                                logging.warning("Ha ocurrido un error en la transmision")
+                            finally:
+                                sock.close()
+                        else:
+                            logging.info("Se ha rechazado su solicitud")
+                    else:
+                        logging.warning("Su transmisión ha sido rechazada, intentelo más tarde")
+
+                elif instruccion=="3":  #Cifrado
+                    if self.pwd:
+                        encender=input("El cifrado está encendido, desea apagarlo: S/N  ")
+                        if encender=="S":
+                            self.pwd=False
+                            print("Apagado")
+                        else:
+                            pass
+                    else:
+                        encender=input("El cifrado está apagado, desea encenderlo: S/N  ")
+                        if encender=="S":
+                            self.pwd=True
+                            print("Encendido")
+                    
+                elif instruccion=="4":      #Desconectarme
+                    self.instru.goodbye()
+                    self.mqttc.disconnect()
+                    sys.exit()
+                else:
+                    print("\nIngrese un comando válido, Ej: \'1a\'")
+        except KeyboardInterrupt:           #En caso que se detenga el programa               
+            if self.mqttThread.is_alive():  #se finalizan todos los procesos
+                self.mqttThread._stop()
+                logging.warning("Se esta saliendo del chat")
+        finally:
+            logging.info("¡Vaya! algo pasó.\nPara continuar reiniciar el programa.")
+            self.mqttc.disconnect()
+            sys.exit()
+
+class Instructions(object):                                                 #DRRP   Clase que trabaja actividades secundarias                                           
+    def __init__(self, comando=None):
         self.comando=comando
 
-    def inicial(self):                                                     #DRRP Despliega el menu grafico
+    def inicial(self):                                                      #DRRP   Despliegue de menu                                            
         print("para su uso favor ingresar a una de las siguientes ramas")
         print("\t1. Enviar texto \n\t\ta.Enviar mensaje directo\n\t\tb.Enviar a una sala")
         print("\t2. Enviar nota de voz")
-        print("\t3. Desconectarme")
-        print("\t4. Mostrar opciones")
+        print("\t3. Cifrado")
+        print("\t4. Desconectarme")
 
-    def direct(self):                                                       #DRRP Instruccion para enviar mensajes directos
+    def direct(self):                                                       #DRRP   Establecimiento de mensaje directo
         Destinatario=input("Destinatario:")
         texto_enviar=input("Que le quieres decir a "+Destinatario+": ")     
         return Destinatario, texto_enviar
 
-    def grupo(self):
+    def grupo(self):                                                        #DRRP   Establecimiento de mensaje en grupo
         Destinatario=input("Sala elegida:")
         texto_enviar=input("Que le quieres decir a la sala "+Destinatario+": ")     
         return Destinatario, texto_enviar
 
     def audiorec(self):
+        Destinatario=input("A quien desea enviarle este audio: ")
         duracion=input("Cuantos segundos desea grabar:")
         if int(duracion)>0 and int(duracion)<=30:
             logging.info("Comenzando grabacion...")
-            consola="arecord -d"+str(duracion)+"-f U8 -r 8000 notadevoz.wav"
+            consola="arecord -d "+str(duracion)+" -f U8 -r 8000 notadevoz.wav"
             os.system(consola)
-            peso=os.stat("noradevoz.wav").st_size
+            peso=os.stat("notadevoz.wav").st_size
             grabado=True
         else: 
             logging.warning("Tiempo no valido")
             grabado=False
             peso=0
-        return grabado,peso
+        return Destinatario,peso,grabado
+        
 
     def goodbye(self):
-        pass
+        print("Vaya una pena que te vayas, vuelve pronto")
 
-def Whatsmyname():                                                          #DRRP Identifica quien soy  
-    global YoSoy
-    file=open(CLIENTE+"/usuario","r")#ojo este cambia para clientes
-    for i in file:
-        YoSoy=str(i)
-        YoSoy=YoSoy.replace("\n","")
-    return YoSoy    
+#Referencia https://www.youtube.com/watch?v=SoeeCg04-FA
+class TopSecret(object):
+    def __init__(self,password):
+        self.key=hashlib.sha256(password).digest()
+        self.mode=AES.MODE_CBC
+        self.IV='Stringde16Roche!'
 
-def on_connect(cliente,userdata,flags,rc):                                  #DRRP metodo de MQTT para la conexion con el Broken
-    logging.debug("Conexion establecida")
+    def pad_message(self,mensaje):
+        while len(mensaje)%16!=0:
+            mensaje=mensaje+" "
+        return mensaje
 
-def on_message(client,userdata,msg):                                        #DRRP metodo de MQTT para la recepcion
-    if str(msg.topic)==COMANDOS+"/"+str(grupo)+"/"+YoSoy:                   #     redirige la informacion para el mejor procesamiento
-        ComandConfirm(msg.payload)
-    else:
-        logging.info("\nMensaje de: "+str(msg.topic))
-        logging.info("\t>>"+str(msg.payload)+"\n")
-        logCommand = 'echo "(' + str(msg.topic) + ') -> ' + str(msg.payload) + '" >> ' + LOG_FILENAME
-        os.system(logCommand)
+    def ciftxt(self,mensaje):
+        cipher=AES.new(self.key,self.mode,self.IV)
+        rightlen=self.pad_message(mensaje)
+        encriptado=cipher.encrypt(rightlen)
+        return encriptado
 
-def on_publish(client, userdata, mid):                                      #DRRP metodo de MQTT para la publicacion
-    publishText = "Publicacion satisfactoria"
-    logging.debug(publishText)
-
-def confRecepcion():                                                        #DRRP Hice dos metodos distintos para la publicacion y recepcion
-    global client_receptor                                                  #     porque no estoy seguro de si entrarian en conflicto
-    client_receptor=mqtt.Client(clean_session=True)
-    client_receptor.on_connect=on_connect
-    client_receptor.on_message=on_message
-    client_receptor.username_pw_set(MQTT_USER, MQTT_PASS) 
-    client_receptor.connect(host=MQTT_HOST, port = MQTT_PORT) 
+    def deciftxt(self,mensaje):
+        cipher=AES.new(self.key,self.mode,self.IV)
+        decrypted_text=cipher.decrypt(mensaje)
+        decrypted_text.rstrip().decode()
+        return decrypted_text
     
-def confEmisor():
-    global client_emisor
-    client_emisor = mqtt.Client(clean_session=True) 
-    client_emisor.on_connect = on_connect 
-    client_emisor.on_publish = on_publish 
-    client_emisor.username_pw_set(MQTT_USER, MQTT_PASS)
-    client_emisor.connect(host=MQTT_HOST, port = MQTT_PORT) 
+    def pad_audio(self,file):
+        while len(file)%16 !=0:
+            file = file +b'0'
+        return file
 
-def room_subs():                                                            #DRRP el metodo room_subs y user_subs establecen la suscripcion a todo
-    file=open(CLIENTE+"/salas","r")#ojo cambiar para los clientes           #     los topics que el usuario tiene que estar suscrito
-    finallist=[]
-    for i in file:
-        newlist=[]
-        text=SALAS+"/"+str(grupo)+"/"+str(i)
-        text=text.replace("\n","")
-        newlist.append(text)
-        newlist.append(qos)
-        finallist.append(tuple(newlist))
-    file.close()
-    client_receptor.subscribe(finallist)
-
-def user_subs():
-    userid=Whatsmyname()
-    text=USUARIOS+"/"+userid
-    client_receptor.subscribe((text,qos))
-    text2=COMANDOS+"/"+str(grupo)+"/"+userid
-    client_receptor.subscribe((text2,qos))
-
-def recepcion_data():                                                       #DRRP este metodo lo cree para que pueda trabajar en un hilo demonio
-    client_receptor.loop_start()
-
-def publishData(topicRoot,topicName,value,qos=0,retain=False):              #DRRP metodo encargado del envio de texto y comandos
-    topic=topicRoot+"/"+topicName
-    client_emisor.publish(topic,value,qos,retain)
-
-def clientevivo(qos=0,retain=False):                                        #DRRP metodo especial para el comando ALIVE
-    topic=COMANDOS+"/"+str(grupo)+"/"+YoSoy
-    usuario=bytes(YoSoy,"utf-8")
-    mensaje=COMMAND_ALIVE+b'$'+usuario
-    client_emisor.publish(topic,mensaje,qos,retain)
-
-def Check():                                                                #DRRP metodo que sera ejecutado por el hilo demonio
-        global dead                                                         #     encargado del ALIVE, en el se tiene los retardos
-        global EstoyMuriendo                                                #     segun lo estipulado y tambien mata el programa en
-        while True:                                                         #     caso exista una desconeccion
-            clientevivo()
-            dead+=1
-            if dead==3:
-                EstoyMuriendo=True
-                time.sleep(ItLives)
-            elif EstoyMuriendo==True and dead<=200:
-                time.sleep(AmIDead)
-            elif dead<=3:
-                time.sleep(ItLives)
-            else:
-                logging.critical("Algo salio mal, favor resetear el programa")
-                sys.exit()
-
-def TransmisionAudio():
-    sock=socket.socket()
-    sock.connect((TCP_HOST,TCP_PORT))
-    try:
-        with open("notadevoz.wav","rb") as transmision:
-            sock.sendall(transmision)
-            transmision.close()
-        logging.info("Transmision exitosa")
-    finally:
-        sock.close()
-
-def ComandConfirm(Ack):                                                        #DRRP  con este metodo se recibe la respuesta del servidor
-    global dead                                                                #       es por eso que es importante que dead y EstoyMuriendo sean globales
-    global EstoyMuriendo
-    if str(Ack)==b'\x05':
-        if EstoyMuriendo==True and dead>=3:
-            dead=0
-            EstoyMuriendo==False
-        else:
-            dead-=1
-    elif str(Ack)==b'\x02':
-        TransmisionAudio()
+    def cifaudio(self,audio):
+        cipher=AES.new(self.key,self.mode,self.IV)
+        with open(audio,"rb") as f:
+            data=f.read()
+        rightlen=self.pad_audio(data)
+        f.close()
+        encriptado=cipher.encrypt(rightlen)
+        with open(audio,"wb") as f:
+            f.write(encriptado)
+        f.close()
     
+    def decifaudio(self,audio):
+        cipher=AES.new(self.key,self.mode,self.IV)
+        with open(audio,"rb") as f:
+            data=f.read()
+        decrypted_file = cipher.decrypt(data)
+        f.close()
+        with open(audio,"wb") as f:
+            f.write(decrypted_file.rstrip(b'0'))
 
 
 
-##########################################################################
-####################        Principal              #######################
-##########################################################################
-logging.basicConfig(                                                        #DRRP configuracion del logging
-    level = logging.INFO, 
-    format = '[%(levelname)s] (%(threadName)-10s) %(message)s'
-    )
-
-confEmisor()       #DRRP inicializacion de metodos necesarios
-confRecepcion()
-room_subs()
-user_subs()
-
-t1=threading.Thread(name="Recepcion",target=recepcion_data,args=(),daemon=True) #DRRP creacion del hilo que recibira mensajes
-t2=threading.Thread(name="SigoVivo",target=Check,args=(),daemon=True) #DRRP creacion del hilo que idicara "ALIVE"
-t1.start()
-t2.start()
-
-print("\n\nBienvenido al chat de proyectos980")
-try:
-    while True:                                                             #DRRP manejo de las instruciones iniciales dentro de un ciclo principal
-        instruccion=input("Presiona enter para ver opciones o ingresa un comando: ")
-        if instruccion=="\n":
-            Instructions.inicial(instruccion)
-        elif instruccion=="1a": #Mensaje Directo
-            destin, mensaje=Instructions.direct(instruccion)
-            publishData(USUARIOS,destin,mensaje)
-        elif instruccion=="1b": #Mensaje a grupo
-            destin, mensaje=Instructions.grupo(instruccion)
-            publishData(SALAS,destin,mensaje)
-
-        elif instruccion=="2": #Audio
-            Destinatario=input("Destinatario:")
-            subtopic=Whatsmyname()
-            subtopic=str(grupo)+"/"+subtopic
-            grabado, peso=Instructions.audiorec(instruccion)
-            if grabado:
-                trama=COMMAND_FTR+b'$'+bytes(Destinatario,"utf-8")+bytes(str(peso),"utf-8")
-                publishData(COMANDOS,subtopic,trama)
-
-        elif instruccion=="3":  #Desconectarme
-            Instructions.goodbye(instruccion)
-        elif instruccion=="4":  #Menu
-            Instructions.inicial(instruccion)
-        else:
-            print("Ingrese un comando válido, Ej: \'1a\'")
-            Instructions.inicial(instruccion)
-
-except KeyboardInterrupt:
-    logging.info("\nTerminando conexion")
-    if t1.is_alive():
-        t1._stop()
-    if t2.is_alive():
-        t2._stop()
-finally:
-    
-    client_emisor.disconnect()
-    client_receptor.disconnect()
-    sys.exit()
+ExamenProyectos980=MyMQTTClass()
+ExamenProyectos980.initMQTTClient()

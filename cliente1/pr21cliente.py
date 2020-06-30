@@ -58,8 +58,8 @@ class MyMQTTClass(object):                                                  #DRR
         self.ItLives=ItLives                                                #       Definiciones de tiempo en el ALIVE
         self.AmIDead=AmIDead
         self.instru=Instructions()                                          #DRRP   Instancia de la clase Instruccions
-        self.pwd=True                                               
- 
+        self.pwd=True                                            
+                #***Desactivada de momento****#
     def Whatsmyname(self):                                                  #DRRP   Define el user id
         file=open(USUARIOS,"r")
         for line in file:
@@ -241,8 +241,8 @@ class MyMQTTClass(object):                                                  #DRR
                     destin, peso, recordflag=self.instru.audiorec()
                     if recordflag:
                         logging.info("Espere la validacion del servidor. . . . .")
-                        self.IwantToBreakFree(destin,peso)
-                        time.sleep(5)
+                        self.IwantToBreakFree(destin,str(peso))
+                        time.sleep(10)
                         if self.pwd:
                             self.TopSecret.cifaudio("notadevoz.wav")
                         if self.BanderaAudio:
@@ -318,7 +318,7 @@ class Instructions(object):                                                 #DRR
             logging.info("Comenzando grabacion...")
             consola="arecord -d "+str(duracion)+" -f U8 -r 8000 notadevoz.wav"
             os.system(consola)
-            peso='os.stat("noradevoz.wav").st_size'
+            peso=os.stat("notadevoz.wav").st_size
             grabado=True
         else: 
             logging.warning("Tiempo no valido")
@@ -337,10 +337,12 @@ class TopSecret(object):
         self.mode=AES.MODE_CBC
         self.IV='Stringde16Roche!'
 
+
     def pad_message(self,mensaje):
-        while len(message)%16!=0:
-            message=message+" "
-        return message
+        while len(mensaje)%16!=0:
+            mensaje=mensaje+" "
+        return mensaje
+
 
     def ciftxt(self,mensaje):
         cipher=AES.new(self.key,self.mode,self.IV)

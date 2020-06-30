@@ -58,8 +58,8 @@ class MyMQTTClass(object):                                                  #DRR
         self.ItLives=ItLives                                                #       Definiciones de tiempo en el ALIVE
         self.AmIDead=AmIDead
         self.instru=Instructions()                                          #DRRP   Instancia de la clase Instruccions
-        self.pwd=True                                            
-                #***Desactivada de momento****#
+        self.pwd=True                                               
+ 
     def Whatsmyname(self):                                                  #DRRP   Define el user id
         file=open(USUARIOS,"r")
         for line in file:
@@ -157,7 +157,7 @@ class MyMQTTClass(object):                                                  #DRR
             archivo.close()
             sock.close()
             if self.pwd:
-                self.TopSecret.decifaudio("notaentrante.wav")
+                self.TopSecret.decifaudio("notaentrante.wav") #RDSS tomamos el audio que nos llego y lo enviamos a descifrar
             os.system("aplay notaentrante.wav")
         except InterruptedError:
             logging.warning("Ha ocurrido un error en la transmision")
@@ -188,14 +188,14 @@ class MyMQTTClass(object):                                                  #DRR
         elif data[0][:5]==SALAS:
             logging.info("Se ha recibido un mensaje de la sala "+data[0][9:14])
             if self.pwd:
-                trama=self.TopSecret.deciftxt(data[1])
+                trama=self.TopSecret.deciftxt(data[1]) #RDSS empezamos a descifrar el mensaje que llego a la sala
             else:
                 trama=data[1].decode("utf-8")
             logging.info(trama)
         elif data[0][:8]==USUARIOS:
             logging.info("Se recibió un mensaje para usted")
             if self.pwd:
-                trama=self.TopSecret.deciftxt(data[1])
+                trama=self.TopSecret.deciftxt(data[1]) #RDSS empezamos a descifrar el mensaje que llego al usuario
             else:
                 trama=data[1].decode("utf-8")
             logging.info(trama)
@@ -241,8 +241,8 @@ class MyMQTTClass(object):                                                  #DRR
                     destin, peso, recordflag=self.instru.audiorec()
                     if recordflag:
                         logging.info("Espere la validacion del servidor. . . . .")
-                        self.IwantToBreakFree(destin,str(peso))
-                        time.sleep(10)
+                        self.IwantToBreakFree(destin,peso)
+                        time.sleep(5)
                         if self.pwd:
                             self.TopSecret.cifaudio("notadevoz.wav")
                         if self.BanderaAudio:
@@ -318,7 +318,7 @@ class Instructions(object):                                                 #DRR
             logging.info("Comenzando grabacion...")
             consola="arecord -d "+str(duracion)+" -f U8 -r 8000 notadevoz.wav"
             os.system(consola)
-            peso=os.stat("notadevoz.wav").st_size
+            peso='os.stat("noradevoz.wav").st_size'
             grabado=True
         else: 
             logging.warning("Tiempo no valido")
@@ -333,35 +333,33 @@ class Instructions(object):                                                 #DRR
 #Referencia https://www.youtube.com/watch?v=SoeeCg04-FA
 class TopSecret(object):
     def __init__(self,password):
-        self.key=hashlib.sha256(password).digest()
-        self.mode=AES.MODE_CBC
-        self.IV='Stringde16Roche!'
+        self.key=hashlib.sha256(password).digest() #RDSS key
+        self.mode=AES.MODE_CBC #RDSS utilizamos un cifrado simetrico
+        self.IV='Stringde16RuDSS!' #RDSS vector inicializacion
 
+    def pad_message(self,mensaje): #RDSS verificamos el tamaño del archivo y le agreamos espacios para completar
+        while len(message)%16!=0:  
+            message=message+" "
+        return message  
 
-    def pad_message(self,mensaje):
-        while len(mensaje)%16!=0:
-            mensaje=mensaje+" "
-        return mensaje
-
-
-    def ciftxt(self,mensaje):
-        cipher=AES.new(self.key,self.mode,self.IV)
+    def ciftxt(self,mensaje): #RDSS tomamos el mensaje que vamos a enviar y lo ciframos
+        cipher=AES.new(self.key,self.mode,self.IV) 
         rightlen=self.pad_message(mensaje)
         encriptado=cipher.encrypt(rightlen)
         return encriptado
 
-    def deciftxt(self,mensaje):
-        cipher=AES.new(self.key,self.mode,self.IV)
+    def deciftxt(self,mensaje): #RDSS le ingresamos el mensaje que nos llega y lo desciframos
+        cipher=AES.new(self.key,self.mode,self.IV) 
         decrypted_text=cipher.decrypt(mensaje)
         decrypted_text.rstrip().decode()
         return decrypted_text
     
-    def pad_audio(self,file):
+    def pad_audio(self,file): #RDSS verificamos el tamaño del archivo y le agregamos b'0' para completar el tamaño
         while len(file)%16 !=0:
             file = file +b'0'
         return file
 
-    def cifaudio(self,audio):
+    def cifaudio(self,audio):  #RDSS tomamos el audio y lo ciframos
         cipher=AES.new(self.key,self.mode,self.IV)
         with open(audio,"rb") as f:
             data=f.read()
@@ -372,7 +370,7 @@ class TopSecret(object):
             f.write(encriptado)
         f.close()
     
-    def decifaudio(self,audio):
+    def decifaudio(self,audio): #RDSS desciframos el audio que nos llega 
         cipher=AES.new(self.key,self.mode,self.IV)
         with open(audio,"rb") as f:
             data=f.read()

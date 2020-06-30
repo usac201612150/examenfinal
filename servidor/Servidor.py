@@ -58,24 +58,24 @@ class claseMQTT (object):
         self.mqttc.connect(address,port)
 
     def suscripcionesTopic(self):
-        datos = []      #creamos una lista para almacenar los datos de cada linea del archivo
-        suscripciones = []         #creamos la lista donde almacenaremos las tuplas de los topics
-        qos = 2                    #qos valor que nos servira para indicar que forma de transferencia preferimos
+        datos = []      #RDSS creamos una lista para almacenar los datos de cada linea del archivo
+        suscripciones = []         #RDSS creamos la lista donde almacenaremos las tuplas de los topics
+        qos = 2                    #RDSS qos valor que nos servira para indicar que forma de transferencia preferimos
 
-        archivo = open(USUARIOS, 'r') #abrimos el archivo usuarios en modo lectura
-        for linea in archivo:         #for para cada line del archivo
-            registro = linea.split(',') #va a separar cada vez que encuentre una coma
-            registro[-1] = registro[-1].replace('\n', '')  #elimina el salto de linea que encuentra al final de cada linea
-            datos.append(registro) #agrega la lista registros dentro de la lista datos
-        archivo.close() #Cerramos el archivo
+        archivo = open(USUARIOS, 'r') #RDSS abrimos el archivo usuarios en modo lectura
+        for linea in archivo:         #RDSS for para cada line del archivo
+            registro = linea.split(',') #RDSSva a separar cada vez que encuentre una coma
+            registro[-1] = registro[-1].replace('\n', '')  #RDSS elimina el salto de linea que encuentra al final de cada linea
+            datos.append(registro) #RDSS agrega la lista registros dentro de la lista datos
+        archivo.close() #RDSS Cerramos el archivo
 
-        for i in range(len(datos)):  #For que nos recorre la lista datos
-            Nusuarios = [qos]        #creamos una lista para los N usuarios con el valor de qos ya definido
-            NuevoSuscriptor = COMANDOS+'/'+str(GRUPO)+'/'+str(datos[i][0]) #agragamos el usuario a la cadena para suscribirnos al topic
-            Nusuarios.insert(0,NuevoSuscriptor) #le indicamos que vamos a agregar la suscripcion al principio de la lista Nusuarios y corremos qos
-            TuplaNusuarios = tuple(Nusuarios)   #convertimos la lista a tuplas 
-            suscripciones.append(TuplaNusuarios) #agregamos la tupla a la lista de suscripciones
-        self.mqttc.subscribe(suscripciones) #nos suscribimos a todos los usuarios que estan en la lista
+        for i in range(len(datos)):  #RDSS For que nos recorre la lista datos
+            Nusuarios = [qos]        #RDSS creamos una lista para los N usuarios con el valor de qos ya definido
+            NuevoSuscriptor = COMANDOS+'/'+str(GRUPO)+'/'+str(datos[i][0]) #RDSS agragamos el usuario a la cadena para suscribirnos al topic
+            Nusuarios.insert(0,NuevoSuscriptor) #RDSS le indicamos que vamos a agregar la suscripcion al principio de la lista Nusuarios y corremos qos
+            TuplaNusuarios = tuple(Nusuarios)   #RDSS convertimos la lista a tuplas 
+            suscripciones.append(TuplaNusuarios) #RDSS agregamos la tupla a la lista de suscripciones
+        self.mqttc.subscribe(suscripciones) #RDSS nos suscribimos a todos los usuarios que estan en la lista
         #self.mqttc.loop_start()    DRRP la idea era que corriera en el hilo principal, pero no jalo entonces lo voy a meter a un hilo demonio
         self.mqttThread=threading.Thread(target=self.mqttc.loop_start,name="MQTT",daemon=True)
         self.mqttThread.start()
@@ -87,7 +87,7 @@ class claseMQTT (object):
         #                            )
         #hiloAlives.start()
 
-    def inicioMQTT(self):
+    def inicioMQTT(self): #RDSS datos e inicio del clienteMQTT
         direccion = MQTT_HOST
         puerto = MQTT_PORT
         usuario = MQTT_USER
@@ -101,28 +101,28 @@ class claseMQTT (object):
         self.theylive.start()
         self.interfaz()
 
-    def publishData(self, topic, data): #Publicador simple
+    def publishData(self, topic, data): #RDSS Publicador simple
         self.mqttc.publish(topic = topic, payload = data,qos=0)
 
 
     def recepcionMensaje(self, data):
-        data=(str(data[0],data[1])) #topic en [0]   , codigo$usuarioID $tamaño
+        data=(str(data[0],data[1])) #RDSS topic en [0]   , codigo$usuarioID $tamaño
         datos = []
         datos = data[1].decode().split('$')
         Ingresotopic = []
         Ingresotopic = data[0].decode().split('/')
         emisor = Ingresotopic[2]
         self.emisormensaje=emisor
-        if len(datos) == 3:
+        if len(datos) == 3: #RDSS si se recibieron 3 datos comando, usuario, tamaño
             ComandoRecibido = datos[0]
             self.usuariodestino = datos[1]
             self.tamanoarchivo = datos[2]
-        elif len(datos) == 2:
+        elif len(datos) == 2: #RDSS si se recibieron 2 datos comandos, usuario
             ComandoRecibido = datos[0]
             self.usuariovivo = datos[1]
         
         if ComandoRecibido == '\x04':  #RDSS verificamos si es un mensaje de ALIVE
-            self.cambiodeestado(self.usuariovivo)
+            self.cambiodeestado(self.usuariovivo) #cambiamos de estado en el diccionario 
             #logging.info('enviar loggin')
             self.ACK(self.usuariovivo)     #RDSS Enviamos un ACK al client
         elif ComandoRecibido == '\x03' and len(self.usuariodestino)==9:  #RDSS verificamos si es un solicitud de transferencia a un usuario
@@ -131,22 +131,22 @@ class claseMQTT (object):
             self.OKsalas(self.usuariodestino, self.emisormensaje,self.tamanoarchivo)
                 #self.NotiparaEnviar(usuariogrupo, tamañoarchivo)
     
-    def ACK(self, usuariogrupo, qos=0, retain=False):
+    def ACK(self, usuariogrupo, qos=0, retain=False): #RDSS publica un ACK en el topic
         topic = COMANDOS+'/'+str(GRUPO)+'/'+self.usuariovivo
         mensaje = COMANDO_ACK+b'$'+bytes(self.usuariovivo,'utf-8')
         self.mqttc.publish(topic,mensaje,qos,retain)
 
-    def OK(self, usuariogrupo, qos = 0, retain=False):
+    def OK(self, usuariogrupo, qos = 0, retain=False): #RDSS le manda un OK si se cumplen las condiciones
         topic = COMANDOS+'/'+str(GRUPO)+'/'+usuariogrupo
         mensaje = COMANDO_OK+b'$'+bytes(usuariogrupo,'utf-8')
         self.mqttc.publish(topic,mensaje,qos,retain)
 
-    def NO(self, usuariogrupo, qos = 0, retain=False):
+    def NO(self, usuariogrupo, qos = 0, retain=False): #RDSS manda un NO si no se cumplen las condiciones
         topic = COMANDOS+'/'+str(GRUPO)+'/'+usuariogrupo
         mensaje = COMANDO_NO+b'$'+bytes(usuariogrupo,'utf-8')
         self.mqttc.publish(topic,mensaje,qos,retain)  
 
-    def FRR(self, usuariogrupo,tamanoarchivo, qos = 0, retain=False):
+    def FRR(self, usuariogrupo,tamanoarchivo, qos = 0, retain=False):#RDSS manda una solicitud de FRR al destinatario
         topic = COMANDOS+'/'+str(GRUPO)+'/'+usuariogrupo
         mensaje = COMANDO_FRR+b'$'+bytes(usuariogrupo,'utf-8')+bytes(tamanoarchivo,'utf-8')
         self.mqttc.publish(topic,mensaje,qos,retain)
@@ -161,13 +161,13 @@ class claseMQTT (object):
         publishText = "Publicacion satisfactoria"
         logging.info(publishText)   
 
-    def segundo (self):
+    def segundo (self): #RDSS lo utilizaremos para obtener el segundo actual
         formato = "%S"
         now = datetime.today()
         tiempo = now.strftime(formato)
         return tiempo  
 
-    def DiccReg (self,ArchivoUsuarios, ArchivoSalas):
+    def DiccReg (self,ArchivoUsuarios, ArchivoSalas): #RDSS nos dara un diccionario, una lista de usuarios y una lista de salas
         #RDSS nos sirve para obtener los datos del archivo usuarios
         datos = []
         datossala = []
@@ -188,14 +188,14 @@ class claseMQTT (object):
         leer.close()
         for i in range(len(salas)):
             salas[i] = salas[i].replace('\n','')
-        return diccionario, registro, salas #Regresamos un Diccionario para alives, Lista de usuarios, Lista de salas
+        return diccionario, registro, salas #RDSS Regresamos un Diccionario para alives, Lista de usuarios, Lista de salas
 
-    def borrar (self, diccionario):
+    def borrar (self, diccionario): #RDSS estara verificando quienes tienen 6 o mas de 6 segundos y les cambiara el estado
         for i in diccionario:    
             if diccionario[i][1] <= int(self.segundo())-6:
                 diccionario[i] = [False, int(self.segundo())]
 
-    def cambiodeestado (self, usuariosID):
+    def cambiodeestado (self, usuariosID): #RDSS cambia de estado para el usuario en el diccionario a un TRUE
         self.diccionario[usuariosID] = [True, int(self.segundo())]
 
     def Alives(self):
@@ -223,15 +223,15 @@ class claseMQTT (object):
 
 
 
-    def OKsalas(self, sala, emisor,tamanoarchivo):
-        usuariosActivos = 0  #contador que nos servira para saber cuantas personas de la sala estan activas
+    def OKsalas(self, sala, emisor,tamanoarchivo):#RDSS verificamos las condiciones para la transferencia a una sala
+        usuariosActivos = 0  #RDSS contador que nos servira para saber cuantas personas de la sala estan activas
         if sala in self.listasalas: #RDSS Nos indica si es una sala valida para dentro de 21S01 a 21S99
             for i in range(len(self.listausuarios)): #RDSS recorremos la lista de usuarios 
                 if (emisor in self.listausuarios[i]) and (sala in self.listausuarios[i]):#RDSS buscamos si el emisor pertenece a la sala a donde quiere enviar
                     for j in range(len(self.listausuarios)): #volvemos a recorrer la lista de usuarios pero ahora para buscar los usuarios de la sala
                         if (sala in self.listausuarios[j]) and self.diccionario[self.listausuarios[j][0]][0]: #si la sala esta en cierta linea 201612150,Rubén Simon, 21S01
                             usuariosActivos = usuariosActivos + 1 #si está activo va a sumar 1 al contador
-                    if usuariosActivos > 0:
+                    if usuariosActivos > 0: #RDSS si hay mas de 1 cliente activo enviara un ok, enviara un FRR y emepzara la emision de audio 
                         self.OK(emisor)
                         self.FRR(sala,tamanoarchivo)
                         logging.info("Espera de audio")
@@ -313,46 +313,12 @@ examenproyectos980=claseMQTT()
 examenproyectos980.inicioMQTT()
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-"""
-try: 
-    mqtt = claseMQTT()
-except KeyboardInterrupt:
-    mqtt.ConfiguracionMQTT.close()
-    sys.exit()
-"""
-
-
-#while True:
-#    try:
-#        pass
-#    except KeyboardInterrupt:
-#        sock.close()
-#        logging.warning("Desconectando del broker...")
-#    finally:
-#        # Se baja el servidor para dejar libre el puerto para otras aplicaciones o instancias de la aplicacion
-#        client.loop_stop() #Se mata el hilo que verifica los topics en el fondo
-#        client.disconnect() #Se desconecta del broker
-#        logging.info("Desconectado del broker. Saliendo...")
-#        connection.close()
-#        print('\n\nConexion finalizada con el servidor')
+"""""
+Tenemos implementado el servidor y el cliente mqtt en clases, tenemos el protocolo de negociacion
+pero tuvimos problemas con la ejecucion del servidor, al momento de pasar a clases todo, tuve problemas,
+no supe como hacer para iniciar y que se quedara ejecutando. intentamos poner una "interfaz" 
+para saber que estaba pasando y no pudimos tener más detalles. hicimos algunas pruebas publicando
+un mensaje fijo para ver si se suscribia o si conectaba al broker, y si pudimos ver que estuvo enviando 
+el mensaje, pero no nos saltaba ningun loggin de que se estaba corriendo correctamente. trate de armar
+el servidor por partes pero de la misma forma no supe como mantener ejecutado siempre la clase.
+"""""
